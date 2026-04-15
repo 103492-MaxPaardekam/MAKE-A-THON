@@ -1,0 +1,96 @@
+SAMENWERKINGSOVEREENKOMST (UITGEBREIDE VERSIE)
+
+Partijen
+Deze samenwerkingsovereenkomst (hierna: "Overeenkomst") wordt aangegaan tussen:
+
+1. Max (hierna: "Partij 1")
+2. Hicham (hierna: "Partij 2")
+3. Tristan (hierna: "Partij 3")
+
+Partij 1, Partij 2 en Partij 3 worden hierna gezamenlijk aangeduid als: "Partijen".
+
+Datum en context
+Deze Overeenkomst treedt in werking op 15 april 2026 en is opgesteld in het kader van een gezamenlijk project.
+
+Artikel 1 - Doel van de samenwerking
+1. Partijen werken samen aan het ontwikkelen, testen en presenteren van een gezamenlijk projectresultaat.
+2. Partijen spannen zich in om het project tijdig en met voldoende kwaliteit op te leveren.
+
+Artikel 2 - Rollen en taakverdeling
+1. Partijen spreken uiterlijk bij projectstart af wie verantwoordelijk is voor:
+   a. Planning en coordinatie
+   b. Ontwikkeling en techniek
+   c. Testen, documentatie en presentatie
+2. De taakverdeling wordt schriftelijk vastgelegd in een takenoverzicht.
+3. Iedere partij blijft eindverantwoordelijk voor de eigen toegewezen taken.
+
+Artikel 3 - Planning, deadlines en aanwezigheid
+1. Partijen maken een gezamenlijke planning met tussentijdse deadlines (milestones).
+2. Iedere partij bewaakt de voortgang van de eigen taken en meldt vertraging direct.
+3. Bij afwezigheid of verhindering meldt de betreffende partij dit zo snel mogelijk aan de andere partijen.
+
+Artikel 4 - Communicatie en besluitvorming
+1. Partijen communiceren respectvol, tijdig en transparant.
+2. Belangrijke inhoudelijke en technische beslissingen worden gezamenlijk genomen.
+3. Indien geen consensus wordt bereikt, geldt de oplossing die projectvoortgang en haalbaarheid het best waarborgt.
+
+Artikel 5 - Kwaliteit en oplevering
+1. Opgeleverde onderdelen moeten functioneel controleerbaar zijn.
+2. Afspraken over codekwaliteit, testen en documentatie worden vooraf onderling vastgesteld.
+3. Geen onderdeel wordt als "af" beschouwd zonder onderlinge verificatie.
+
+Artikel 6 - Niet nakomen van afspraken
+1. Wanneer een partij afspraken structureel niet nakomt, spreken partijen deze partij hier eerst op aan in goed overleg.
+2. Blijft verbetering uit, dan worden taken herverdeeld om projectschade te beperken.
+3. Structureel niet nakomen wordt vastgelegd in het projectlogboek en kan worden meegewogen in de onderlinge beoordeling/presentatieverantwoording.
+
+Artikel 7 - Intellectueel eigendom en gebruik van materiaal
+1. Resultaten die gezamenlijk in dit project zijn gemaakt, gelden als gezamenlijk werk, tenzij vooraf schriftelijk anders afgesproken.
+2. Materiaal van derden wordt alleen gebruikt met correcte bronvermelding en binnen toegestane gebruiksrechten.
+
+Artikel 8 - Vertrouwelijkheid en privacy
+1. Partijen gaan zorgvuldig om met vertrouwelijke informatie en persoonsgegevens.
+2. Gegevens worden alleen gebruikt voor het projectdoel en niet zonder toestemming gedeeld met derden.
+
+Artikel 9 - Geschillen en escalatie
+1. Geschillen worden eerst onderling besproken in een gepland overlegmoment.
+2. Indien nodig vragen partijen een begeleider of onafhankelijke derde om te bemiddelen.
+3. Afspraken uit bemiddeling worden schriftelijk bevestigd.
+
+Artikel 10 - Beëindiging
+1. De Overeenkomst eindigt automatisch na afronding en oplevering van het project.
+2. Voortijdige beëindiging door een partij wordt vooraf gemotiveerd en met de andere partijen besproken.
+
+Artikel 11 - Slotbepalingen
+1. Wijzigingen op deze Overeenkomst zijn alleen geldig indien schriftelijk vastgelegd en door alle partijen geaccordeerd.
+2. Op deze Overeenkomst is Nederlands recht van toepassing.
+
+Bijlage A - Takenoverzicht (in te vullen)
+- Partij 1 (Max): _______________________________________________
+- Partij 2 (Hicham): ____________________________________________
+- Partij 3 (Tristan): ____________________________________________
+
+Bijlage B - Milestones (in te vullen)
+- Milestone 1: ____________________ Deadline: ____________________
+- Milestone 2: ____________________ Deadline: ____________________
+- Milestone 3: ____________________ Deadline: ____________________
+
+Aldus overeengekomen en in drievoud opgesteld:
+
+Plaats: __________________________
+Datum: __________________________
+
+Handtekening Partij 1 (Max):
+
+Naam: Max
+Handtekening: __________________________
+
+Handtekening Partij 2 (Hicham):
+
+Naam: Hicham
+Handtekening: __________________________
+
+Handtekening Partij 3 (Tristan):
+
+Naam: Tristan
+Handtekening: __________________________
