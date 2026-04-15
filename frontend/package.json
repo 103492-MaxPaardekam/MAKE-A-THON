@@ -5,7 +5,7 @@
   "description": "React Native Expo frontend for Save The World Crisis Helper MVP",
   "main": "expo/AppEntry",
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^1.19.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "axios": "^1.6.0",
     "expo": "^55.0.15",
     "mapbox-gl": "^2.15.0",
