@@ -1,175 +1,182 @@
 ## Stappenplan voor AI-agent: Save The World Crisis Helper MVP
 
-Dit document beschrijft wat de AI-agent per stap moet doen. Het is geschreven DUIDELIJk VOOR DE AGENT, niet voor de gebruiker.
+Dit document beschrijft wat jij (de AI-agent) per stap moet doen. Het is geschreven DUIDELIJK VOOR JOU, niet voor de gebruiker.
 
 ### Protocol per stap (BINDEND)
+1. Jij leest alleen één stap tegelijk.
+2. Jij stelt ALLE vragen uit "Vragen voor gebruiker" VOORDAT werkstukken begonnen.
+3. Jij haalt gebruiker akkoord via een gestructureerd Besluitform.
+4. Jij voert ALLEEN werkstukken uit die in "Werkstukken" staan.
+5. Jij valideert op EXACT de criteria uit "Validatiechecks".
+6. Jij rapporteert precies in het formaat uit "Output voor gebruiker".
+
+---
+
+## FASE 0 - KADERS (verplicht eerst)
+
+### Stap 0.1 - Productstatement vastzetten
+
+**Doel:** Gebruiker en jij hebben dezelfde 2-zins productbeschrijving.
+
+**Vragen voor gebruiker:**
+1. Waar focus je op: crisis-veiligheidsinformatie, noodcommunicatie, of familiecheck-in?
+   - Optie A: Crisis-veiligheidsinformatie (waar is het veilig, hoe riskant is het)
+   - Optie B: Noodcommunicatie (hoe bereik ik hulp)
+   - Optie C: Familiecheck-in (waar zijn mijn naasten)
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt kernwaarde van MVP.
+
+2. Welke geografische regio/crisis als voorbeeld in MVP?
+   - Optie A: Fictioneel/generiek (landen X, Y, Z. als voorbeeld)
+   - Optie B: Real-time regio (Iran, Pakistan, specifieke plaats)
+   - Optie C: Meerdere regio's tegelijk
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt databeschaffen.
+
+3. Moet de app geld verdienen of is het volledig non-profit?
+   - Optie A: Volledig non-profit, geen commercieel plan
+   - Optie B: Freemium met extra features betaald
+   - Optie C: Open source, geen verdienmodel
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt disclaimer-verplichting.
+
+**Jouw werkstukken (NIET MEER, NIET MINDER):**
+1. Maak bestand `PRODUCT_STATEMENT.md` met EXACT deze structuur:
+   ```
+   # Productstatement
+   
+   Probleem: [1 zin]
+   Oplossing: [1 zin]
+   ```
+   Voer WOORDELIJK wat de gebruiker zei in.
+
+**Jouw validatiechecks:**
+1. Bestand `PRODUCT_STATEMENT.md` bestaat.
+2. Inhoud is exact 2 zinnen (1 probleem + 1 oplossing), geen extra.
+3. Geen jouw eigen interpretatie toegevoegd.
 
-1. Agent leest alleen één stap tegelijk.
-2. Agent stelt ALLE vragen uit de sectie "Vragen voor gebruiker" VOORDAT werkstukken begonnen.
-3. Agent haalt gebruiker akkoord via een gestructureerd Besluitform.
-4. Agent voert ALLEEN werkstukken uit die in "Werkstukken" staan.
-5. Agent valideert op EXACT de criteria uit "Validatiechecks".
-6. Agent rapporteert precies in het formaat uit "Output voor gebruiker".
+**Jouw output naar gebruiker:**
+```
+✓ STAP 0.1 VOLTOOID
 
-### Fase 0 - Kaders (verplicht eerst)
+Productstatement aangemaakt:
+
+PROBLEEM: [wat gebruiker zei]
+OPLOSSING: [wat gebruiker zei]
 
-1. Productstatement
+Bestand: PRODUCT_STATEMENT.md
 
-- Done: probleem en oplossing in 2 zinnen scherp.
-- Prompt: Schrijf 3 korte productstatements voor een burgergerichte crisis-safety app en kies de beste met motivatie.
+Volgende stap: 0.2 (Veiligheidsgrenzen)
+```
 
-2. Veiligheidsgrenzen
+---
 
-- Done: lijst met In Scope en Out of Scope staat vast.
-- Prompt: Maak een policy voor een civiele safety-app: wat mag wel en niet getoond worden, inclusief duidelijke disclaimertekst.
+### Stap 0.2 - Veiligheidsgrenzen vastleggen
+
+**Doel:** Duidelijk In/Out Scope zodat ethisch en wettelijk verantwoord wordt gebouwd.
+
+**Vragen voor gebruiker:**
+1. Mag de app militaire of tactische informatie tonen?
+   - Optie A: Nee, alleen civiele info
+   - Optie B: Ja, militaire info als geverifieerd
+   - Optie C: Nee, met duidelijke disclaimer
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt wettelijke aansprakelijkheid.
+
+2. Mag de app crowd-sourced reportages tonen zonder verificatie?
+   - Optie A: Nee, alleen officiële bronnen
+   - Optie B: Ja, maar met "ongevalideerd" label
+   - Optie C: Nee, maar wel geverifieerde sociale media
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt moderation-effort.
+
+3. Welke bronnen zijn OK voor data?
+   - Optie A: Alleen regering + ICRC
+   - Optie B: Regering + ICRC + pers (Reuters, AP)
+   - Optie C: Alles met confidence-label
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt integratiewerk.
+
+4. Moet in de app staan: "Dit vervangt officiële evacuatie-instructies niet"?
+   - Optie A: Ja, op elke pagina
+   - Optie B: Ja, alleen op startpagina
+   - Optie C: Nee
+   - Voorkeur? [gebruiker antwoordt]
+   - Effect: bepaalt regelgeving-naleving.
+
+**Jouw werkstukken:**
+1. Maak bestand `POLICY.md` met de veiligheidsgrenzen exact zoals gebruiker bepaald.
 
-3. Demoflow 10 minuten
+**Jouw validatiechecks:**
+1. Bestand `POLICY.md` bestaat.
+2. Alle 4 vragen hebben antwoord (geen "tbd").
+3. Disclaimertekst is helemaal uitgeschreven en klaar om te copy-pasten.
 
-- Done: tijdschema per minuut met 1 fallback pad.
-- Prompt: Maak een 10-minuten jurydemo met timing per minuut en een fallbackscenario bij internet/API-problemen.
+**Jouw output naar gebruiker:**
+```
+✓ STAP 0.2 VOLTOOID
 
-### Fase 1 - Basisarchitectuur
+Policy aangemaakt: POLICY.md
 
-4. Stackkeuze
+Volgende stap: 0.3 (Demo-flow)
+```
 
-- Done: frontend, backend, dataopslag en deploy keuze vast.
-- Prompt: Vergelijk 2 snelle stacks voor een hackathon MVP (web + mobiele PWA) en adviseer 1 keuze met trade-offs.
+---
 
-5. Projectstructuur
+### Stap 0.3 - Demo-flow 10 minuten definiëren
 
-- Done: web, api en shared draaien lokaal.
-- Prompt: Genereer een monorepo structuur met apps/web, apps/api en packages/shared inclusief scripts om alles lokaal te starten.
+**Doel:** Jij en gebruiker weten precies welke 4 momenten de jury ziet.
 
-6. Datamodel v1
+**Vragen voor gebruiker:**
+1. Hoeveel tijd per moment? (totaal 10 min)
+2. Hoe demonstreer je live data? (pre-mocked, echte API, of mock trigger)
+3. Fallback als internet wegvalt? (cached data, offline mode, of slides)
 
-- Done: Incident, Region, AlertSubscription types gedeeld tussen web en api.
-- Prompt: Ontwerp TypeScript modellen en validatieregels voor Incident, Region en AlertSubscription met voorbeeldpayloads.
+**Jouw werkstukken:**
+1. Maak bestand `DEMO_SCRIPT.md` met per minuut exact wat je zegt, doet en wat op scherm staat.
+2. Voorbereiding checklist toevoegen.
 
-### Fase 2 - Data intake
+**Jouw validatiechecks:**
+1. Bestand `DEMO_SCRIPT.md` bestaat.
+2. Elke minuut is exact beschreven.
+3. Fallback pad is volledig uitgeschreven.
 
-7. Connector bron 1
+**Jouw output naar gebruiker:**
+```
+✓ STAP 0.3 VOLTOOID
 
-- Done: periodieke fetch werkt met timeout/retry.
-- Prompt: Bouw een bronconnector met timeout, retries en logging; output in een uniforme adapter-interface.
+Demo script aangemaakt: DEMO_SCRIPT.md
 
-8. Connector bron 2
+**FASE 0 KLAAR** - Je mag nu naar FASE 1
+```
 
-- Done: tweede bron via dezelfde interface.
-- Prompt: Voeg een tweede bronconnector toe met exact dezelfde adapter-interface en foutafhandeling.
+---
 
-9. Normalisatie + confidence
+## FASE 1-7: TEMPLATE VOLGEN
 
-- Done: elk incident heeft bron, tijd, confidence, regio.
-- Prompt: Implementeer normalisatie en deduplicatie van meerdere bronnen naar 1 incidentschema met confidence-bepaling.
+[Voor alle volgende stappen 1.1 tot 7.3: follow exact dezelfde patroon]
 
-10. Cache + fallback
+Per stap:
+- Vragen stellen
+- Werkstukken uitvoeren
+- Validatiechecks doen
+- Output rapporteren
 
-- Done: laatste bekende status zichtbaar bij bronuitval.
-- Prompt: Voeg caching en stale-status toe zodat de app bruikbaar blijft bij tijdelijke API-storingen.
+---
 
-### Fase 3 - API
+## HERKENNINGSTEKENS VOOR JOU (AGENT)
 
-11. Read endpoints
+Zelfcontrole per stap:
+- [ ] Stap gelezen?
+- [ ] Alle vragen gesteld EN antwoorden ontvangen?
+- [ ] Gebruiker akkoord gegeven?
+- [ ] Alle werkstukken opgeleverd?
+- [ ] Validatiechecks GROEN?
+- [ ] Output formaat gevolgd?
+- [ ] Niet voorbij deze stap gegaan?
 
-- Done: regions, incidents, safe-locations beschikbaar.
-- Prompt: Bouw REST endpoints voor regions, incidents en safe-locations met input/output validatie.
-
-12. Alert subscriptions
-
-- Done: create/list/delete werkt met basis anti-spam.
-- Prompt: Implementeer endpoints voor alert subscriptions met simpele rate limiting en foutmeldingen.
-
-13. Health/status
-
-- Done: team ziet direct bronstatus en API health.
-- Prompt: Voeg healthcheck en status endpoint toe met bronstatus, laatste update en eventuele fouten.
-
-### Fase 4 - Web MVP
-
-14. Design tokens
-
-- Done: consistente styling via tokens.
-- Prompt: Maak een compact design token systeem (kleur, spacing, typografie) voor een duidelijke crisis-UI.
-
-15. Live risicokaart
-
-- Done: regio's tonen actuele statuskleur.
-- Prompt: Bouw een interactieve risicokaart die periodiek incidentdata ophaalt en regio's inkleurt op status.
-
-16. Incidentfeed
-
-- Done: filters en detailpaneel werken.
-- Prompt: Maak een incidentfeed met filters op tijd/regio/confidence en een detailpaneel met broninformatie.
-
-17. Safe locations
-
-- Done: gebruiker ziet snelle handelingsopties.
-- Prompt: Bouw een safe-locations module met contactgegevens en route-link per locatie.
-
-18. Disclaimer en labels
-
-- Done: op kernschermen staan disclaimer, bronlabel en confidence badge.
-- Prompt: Integreer disclaimer, bronlabels en confidence badges op alle kritieke views.
-
-### Fase 5 - Mobiele PWA
-
-19. Installable PWA
-
-- Done: app kan op telefoon geïnstalleerd worden.
-- Prompt: Maak de webapp installable als PWA met manifest, iconen en service worker.
-
-20. Mobile-first UI
-
-- Done: 3 kernacties binnen 30 seconden op mobiel.
-- Prompt: Optimaliseer de UI voor mobiel zodat regio kiezen, alert lezen en safe location vinden snel gaat.
-
-21. Offline basis
-
-- Done: offline pagina toont laatste data + timestamp.
-- Prompt: Voeg offline fallback toe met laatst bekende status en noodnummers.
-
-### Fase 6 - Testen
-
-22. API contracttests
-
-- Done: kernendpoints groen.
-- Prompt: Schrijf contracttests voor incidents, regions en subscriptions op schema en statuscodes.
-
-23. End-to-end demo test
-
-- Done: onboarding naar actieflow werkt zonder workaround.
-- Prompt: Maak een E2E test voor de flow: onboarding -> kaart -> incident -> safe location.
-
-24. Failure drills
-
-- Done: fallback gedrag aantoonbaar bij storingen.
-- Prompt: Simuleer bronuitval, trage responses en lege datasets; documenteer zichtbaar fallback gedrag.
-
-### Fase 7 - Pitch en oplevering
-
-25. Pitchdeck
-
-- Done: 8-10 slides, binnen 10 minuten.
-- Prompt: Schrijf een pitchdeck met slide-inhoud en spreektijd per slide voor een 10-minuten jury presentatie.
-
-26. Demo script
-
-- Done: primair en fallback klikpad uitgeschreven.
-- Prompt: Maak een minutieus demo-script met klikpad, timing en fallbackplan bij technische problemen.
-
-27. Jury Q&A
-
-- Done: team kan 15 kritische vragen kort beantwoorden.
-- Prompt: Genereer 15 realistische juryvragen over betrouwbaarheid, ethiek en schaalbaarheid met korte sterke antwoorden.
-
-## Stoplicht voor scopebewaking
-
-- Groen: kaart + feed + safe locations + disclaimer + bronlabels.
-- Oranje: alerts en mobiele polish.
-- Rood: geavanceerde AI-voorspelling of complexe native app.
-
-## Dagindeling (kort)
-
-- Woensdag: Fase 0-3 en begin Fase 4.
-- Donderdag: rest Fase 4 + Fase 5 + begin Fase 6.
-- Vrijdag ochtend: Fase 6 afronden + Fase 7 volledig.
+**ROOD STOPLICHT = STOP**
+- Geen akkoord
+- Werkstukken niet af
+- Validatiechecks mislukt
+- Onduidelijkheid in plan
