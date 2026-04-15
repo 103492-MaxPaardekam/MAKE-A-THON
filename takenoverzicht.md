@@ -10,28 +10,27 @@
 
 Dit overzicht helpt het team om taken, voortgang en deadlines helder te houden tijdens de Make-a-Thon.
 
-## Taken per persoon
+## Primaire rollen en gezamenlijke uitvoering
 
-### Max
+### Primair eigenaarschap
 
-- Front-end basisstructuur opzetten
-- Wireframes omzetten naar werkende pagina's
-- Visuele stijl en componenten consistent maken
-- Eindcontrole UI voor demo
+- Max: front-end lead
+- Tristan: back-end lead
+- Hicham: integratie tussen front-end en back-end
 
-### Hicham
+### Gezamenlijke werkwijze (voor iedereen)
 
-- Backend basis opzetten
-- API-endpoints bouwen en testen
-- Database/model koppeling maken
-- Dataflow checken voor live demo
+- We helpen alle drie actief mee op elkaars onderdelen.
+- Niemand werkt alleen maar aan een eigen eiland; we blijven gezamenlijk verantwoordelijk.
+- Bij hoge druk op een onderdeel schuiven we direct met taken.
+- Code, testen en bugfixes worden waar mogelijk samen opgepakt.
 
-### Tristan
+### Concrete taakfocus
 
-- Integratie front-end en backend
-- Testen en bugfixes coördineren
-- Presentatievoorbereiding en demo-script
-- Eindoplevering controleren
+- Front-end: Max leidt, Tristan en Hicham ondersteunen en reviewen.
+- Back-end: Tristan leidt, Max en Hicham ondersteunen en reviewen.
+- Integratie: Hicham leidt, Max en Tristan ondersteunen en testen mee.
+- Demo/presentatie: gezamenlijk voorbereiden en uitvoeren.
 
 ## Milestones
 
