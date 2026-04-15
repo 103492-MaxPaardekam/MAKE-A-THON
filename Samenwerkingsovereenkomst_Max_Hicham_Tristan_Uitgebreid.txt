@@ -71,9 +71,9 @@ Bijlage A - Takenoverzicht (in te vullen)
 - Partij 3 (Tristan): ____________________________________________
 
 Bijlage B - Milestones (in te vullen)
-- Milestone 1: ____________________ Deadline: 15 April 2026
-- Milestone 2: ____________________ Deadline: 16 April 2026
-- Milestone 3: ____________________ Deadline: 17 April 2026
+- Milestone 1: Wireframes, Style Guide, Front-End | Deadline: 15 April 2026
+- Milestone 2: Backend, API's, Databases | Deadline: 16 April 2026
+- Milestone 3: Laatste bugfixes en presentatie. | Deadline: 17 April 2026
 
 Aldus overeengekomen en in drievoud opgesteld:
 
