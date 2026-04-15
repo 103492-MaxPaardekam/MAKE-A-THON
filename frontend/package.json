@@ -4,6 +4,9 @@
   "private": true,
   "description": "Safe Zone frontend application",
   "main": "expo/AppEntry",
+  "engines": {
+    "node": ">=20 <23"
+  },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "axios": "^1.6.0",
@@ -12,12 +15,15 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-native": "0.83.4",
+    "react-native-maps": "^1.27.2",
     "react-native-web": "^0.21.0"
   },
-  "devDependencies": {},
   "scripts": {
     "start": "expo start",
+    "start:ios": "expo start --ios --localhost",
+    "start:localhost": "expo start --localhost",
     "start:web": "expo start --web",
+    "start:web:localhost": "expo start --web --localhost",
     "build:web": "expo export --platform web",
     "build": "expo export"
   }

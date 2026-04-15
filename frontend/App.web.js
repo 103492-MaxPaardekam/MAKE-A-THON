@@ -68,7 +68,11 @@ export default function AppWeb() {
   const [apiStatus, setApiStatus] = useState("loading");
 
   const isDemoMode = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
+    const search =
+      typeof globalThis !== "undefined" && globalThis.location
+        ? globalThis.location.search || ""
+        : "";
+    const params = new URLSearchParams(search);
     return params.get("mode") === "demo";
   }, []);
 
