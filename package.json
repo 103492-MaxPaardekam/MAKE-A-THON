@@ -1,0 +1,16 @@
+{
+  "name": "crisis-helper-root",
+  "version": "0.1.0",
+  "description": "Save The World Crisis Helper MVP - root package",
+  "private": true,
+  "scripts": {
+    "frontend": "cd frontend && npm start",
+    "frontend:web": "cd frontend && npm run start:web",
+    "backend": "cd backend && npm run dev",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend:web\"",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install && cd .."
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "crisis-helper-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React Native Expo frontend for Save The World Crisis Helper MVP",
+  "main": "index.js",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-native": "^0.72.0",
+    "expo": "^49.0.0",
+    "expo-web": "^49.0.0",
+    "mapbox-gl": "^2.15.0",
+    "@react-native-async-storage/async-storage": "^1.19.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "expo-cli": "^6.0.0"
+  },
+  "scripts": {
+    "start": "expo start",
+    "start:web": "expo start --web",
+    "build:web": "expo build:web",
+    "build": "expo build",
+    "eject": "expo eject"
+  }
+}
