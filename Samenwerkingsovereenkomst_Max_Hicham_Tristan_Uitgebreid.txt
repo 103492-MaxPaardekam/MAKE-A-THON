@@ -65,12 +65,7 @@ Artikel 11 - Slotbepalingen
 1. Wijzigingen op deze Overeenkomst zijn alleen geldig indien schriftelijk vastgelegd en door alle partijen geaccordeerd.
 2. Op deze Overeenkomst is Nederlands recht van toepassing.
 
-Bijlage A - Takenoverzicht (in te vullen)
-- Partij 1 (Max): _______________________________________________
-- Partij 2 (Hicham): ____________________________________________
-- Partij 3 (Tristan): ____________________________________________
-
-Bijlage B - Milestones (in te vullen)
+Bijlage - Milestones (in te vullen)
 - Milestone 1: Wireframes, Style Guide, Front-End | Deadline: 15 April 2026
 - Milestone 2: Backend, API's, Databases | Deadline: 16 April 2026
 - Milestone 3: Laatste bugfixes en presentatie. | Deadline: 17 April 2026
