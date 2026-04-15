@@ -24,9 +24,9 @@ const AIR_ALERT_FALLBACK_URL = process.env.AIR_ALERT_FALLBACK_URL || "";
 // Initialize MongoDB connection
 async function initMongoDB() {
   try {
+    console.log("ℹ Connecting to MongoDB...");
     await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 3000,
     });
     console.log("✓ MongoDB connected:", MONGODB_URI);
     return true;
