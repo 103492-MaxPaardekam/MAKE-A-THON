@@ -6,7 +6,6 @@ import {
   StyleSheet,
   FlatList,
   Pressable,
-  ScrollView,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 
@@ -49,10 +48,32 @@ const mockIncidents = [
   },
 ];
 
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  process.env.REACT_APP_API_BASE_URL ||
-  "http://localhost:3001";
+const API_BASE_URL_CANDIDATES = [
+  process.env.EXPO_PUBLIC_API_BASE_URL,
+  process.env.REACT_APP_API_BASE_URL,
+  "http://localhost:3001",
+  "http://127.0.0.1:3001",
+  "http://10.0.2.2:3001",
+].filter(Boolean);
+
+async function fetchFromApi(path, options) {
+  let lastError = null;
+
+  for (const baseUrl of API_BASE_URL_CANDIDATES) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, options);
+      if (!response.ok) {
+        throw new Error(`API ${response.status} on ${baseUrl}`);
+      }
+      const payload = await response.json();
+      return { payload, baseUrl };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("All API base URLs failed");
+}
 
 function scoreColor(score) {
   if (score >= 5) return "#ef4444";
@@ -85,9 +106,7 @@ export default function App() {
   useEffect(() => {
     async function loadIncidents() {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/incidents`);
-        if (!response.ok) throw new Error(`API ${response.status}`);
-        const payload = await response.json();
+        const { payload } = await fetchFromApi("/api/incidents");
         if (Array.isArray(payload?.incidents) && payload.incidents.length > 0) {
           setIncidents(payload.incidents);
           setApiStatus(payload?.cacheMeta?.mode || "live");
@@ -106,12 +125,9 @@ export default function App() {
 
   async function triggerDemoUpdate() {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/demo/trigger-update`, {
+      const { payload } = await fetchFromApi("/api/demo/trigger-update", {
         method: "POST",
       });
-
-      if (!response.ok) throw new Error(`Demo API ${response.status}`);
-      const payload = await response.json();
       if (payload?.incident) {
         setIncidents((current) => [payload.incident, ...current]);
         setApiStatus(payload?.cacheMeta?.mode || "demo-injected");
