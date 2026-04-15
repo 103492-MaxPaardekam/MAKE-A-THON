@@ -2,7 +2,7 @@
   "name": "crisis-helper-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "React Native Expo frontend for Save The World Crisis Helper MVP",
+  "description": "Safe Zone frontend application",
   "main": "expo/AppEntry",
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
