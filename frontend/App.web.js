@@ -619,7 +619,8 @@ export default function AppWeb() {
     const styleEl = document.createElement("style");
     styleEl.textContent = `
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: #05090f; }
+      html, body, #root { width: 100%; min-height: 100%; }
+      body { background: #05090f; overflow: hidden; }
       ::-webkit-scrollbar { width: 4px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 99px; }
@@ -631,6 +632,7 @@ export default function AppWeb() {
       /* ── Layout classes ────────────────────────────────────────── */
       .sz-page {
         display: flex; flex-direction: column;
+        width: 100%;
         min-height: 100vh; padding: 20px 24px;
         box-sizing: border-box; gap: 14px;
       }
@@ -850,7 +852,10 @@ export default function AppWeb() {
   // ── Missing token screen ──
   if (!mapToken) {
     return (
-      <div className="sz-page sz-page--center" style={S.page}>
+      <div
+        className="sz-page sz-page--center"
+        style={{ ...S.page, ...S.centerPage }}
+      >
         <div style={S.errorCard}>
           <div style={{ fontSize: 40, marginBottom: 14 }}>⚠️</div>
           <h2
@@ -903,7 +908,10 @@ export default function AppWeb() {
   // ── Loading screen ──
   if (!isLiveDataReady) {
     return (
-      <div className="sz-page sz-page--center" style={{ ...S.page, gap: 0 }}>
+      <div
+        className="sz-page sz-page--center"
+        style={{ ...S.page, ...S.centerPage, gap: 0 }}
+      >
         {/* Concentric spinning rings */}
         <div
           style={{
@@ -1150,6 +1158,10 @@ export default function AppWeb() {
 const S = {
   // Only keeps non-layout visual tokens; layout/sizing live in .sz-* CSS classes
   page: {
+    width: "100%",
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
     background: [
       "radial-gradient(ellipse 80% 50% at 15% -10%, rgba(29,78,216,0.18) 0%, transparent 60%)",
       "radial-gradient(ellipse 65% 40% at 95% 5%, rgba(127,29,29,0.20) 0%, transparent 55%)",
@@ -1157,6 +1169,11 @@ const S = {
     ].join(", "),
     color: C.textPrimary,
     fontFamily: C.font,
+  },
+
+  centerPage: {
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   topBar: {}, // layout handled by .sz-topbar
