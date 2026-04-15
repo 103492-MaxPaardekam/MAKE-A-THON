@@ -81,12 +81,207 @@ function markerColorFromStatus(status) {
   return "#22c55e";
 }
 
+function formatRelativeTime(isoTime) {
+  if (!isoTime) return "zojuist";
+
+  const timestamp = Date.parse(isoTime);
+  if (Number.isNaN(timestamp)) return "zojuist";
+
+  const diffMs = Date.now() - timestamp;
+  const diffMinutes = Math.floor(diffMs / 60000);
+
+  if (diffMinutes < 1) return "zojuist";
+  if (diffMinutes < 60) return `${diffMinutes} min geleden`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} uur geleden`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} dag(en) geleden`;
+}
+
+function getAreaRadiusKm(incident) {
+  if (incident?.status === "high") return 60;
+  if (incident?.status === "medium") return 35;
+  if (incident?.source === "safe-locations-kyiv") return 8;
+  return 20;
+}
+
+function createAreaPolygon(lng, lat, radiusKm, steps = 24) {
+  const coords = [];
+  const latRadius = radiusKm / 111.32;
+  const lngRadius = radiusKm / (111.32 * Math.cos((lat * Math.PI) / 180));
+
+  for (let i = 0; i <= steps; i += 1) {
+    const angle = (i / steps) * Math.PI * 2;
+    const x = lng + lngRadius * Math.cos(angle);
+    const y = lat + latRadius * Math.sin(angle);
+    coords.push([x, y]);
+  }
+
+  return coords;
+}
+
+function buildRiskAreasGeoJSON(incidents) {
+  return {
+    type: "FeatureCollection",
+    features: incidents
+      .filter(
+        (incident) => incident?.coordinates?.lat && incident?.coordinates?.lng,
+      )
+      .map((incident) => ({
+        type: "Feature",
+        properties: {
+          id: incident.id,
+          title: incident.title,
+          region: incident.region,
+          source: incident.source,
+          status: incident.status || "medium",
+          advice: incident.advice || "let op",
+          confidenceScore: Number(incident.confidenceScore || 3),
+        },
+        geometry: {
+          type: "Point",
+          coordinates: [incident.coordinates.lng, incident.coordinates.lat],
+        },
+      })),
+  };
+}
+
+function buildRiskAreaPolygonsGeoJSON(incidents) {
+  return {
+    type: "FeatureCollection",
+    features: incidents
+      .filter(
+        (incident) => incident?.coordinates?.lat && incident?.coordinates?.lng,
+      )
+      .map((incident) => ({
+        type: "Feature",
+        properties: {
+          id: incident.id,
+          status: incident.status || "medium",
+          source: incident.source,
+          title: incident.title,
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            createAreaPolygon(
+              incident.coordinates.lng,
+              incident.coordinates.lat,
+              getAreaRadiusKm(incident),
+            ),
+          ],
+        },
+      })),
+  };
+}
+
+function ensureRiskAreaLayers(map) {
+  if (map.getSource("risk-areas") && map.getSource("risk-area-polygons")) {
+    return;
+  }
+
+  map.addSource("risk-areas", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+
+  map.addSource("risk-area-polygons", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+
+  map.addLayer({
+    id: "risk-area-fill",
+    type: "fill",
+    source: "risk-area-polygons",
+    paint: {
+      "fill-color": [
+        "match",
+        ["get", "status"],
+        "high",
+        "#dc2626",
+        "medium",
+        "#f59e0b",
+        "#22c55e",
+      ],
+      "fill-opacity": 0.22,
+    },
+  });
+
+  map.addLayer({
+    id: "risk-area-outline",
+    type: "line",
+    source: "risk-area-polygons",
+    paint: {
+      "line-color": [
+        "match",
+        ["get", "status"],
+        "high",
+        "#fca5a5",
+        "medium",
+        "#fde68a",
+        "#86efac",
+      ],
+      "line-width": 1.6,
+      "line-opacity": 0.75,
+    },
+  });
+
+  map.addLayer({
+    id: "risk-areas-fill",
+    type: "circle",
+    source: "risk-areas",
+    paint: {
+      "circle-radius": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4,
+        4,
+        8,
+        6,
+        11,
+        10,
+      ],
+      "circle-color": [
+        "match",
+        ["get", "status"],
+        "high",
+        "#ef4444",
+        "medium",
+        "#f59e0b",
+        "#22c55e",
+      ],
+      "circle-opacity": 0.28,
+      "circle-stroke-width": 1.2,
+      "circle-stroke-color": [
+        "match",
+        ["get", "status"],
+        "high",
+        "#fca5a5",
+        "medium",
+        "#fde68a",
+        "#86efac",
+      ],
+    },
+  });
+}
+
 export default function AppWeb() {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
+  const hasFittedMapRef = useRef(false);
   const [incidents, setIncidents] = useState(incidentsSeed);
   const [apiStatus, setApiStatus] = useState("loading");
+  const isLiveDataReady = apiStatus.startsWith("live-");
+
+  const activeIncidents = useMemo(
+    () => incidents.filter((incident) => incident?.status === "high"),
+    [incidents],
+  );
 
   const isDemoMode = useMemo(() => {
     const search =
@@ -106,14 +301,14 @@ export default function AppWeb() {
     async function loadIncidents() {
       try {
         const { payload } = await fetchFromApi("/api/incidents");
+        setApiStatus(payload?.cacheMeta?.mode || "loading");
+
         if (Array.isArray(payload?.incidents) && payload.incidents.length > 0) {
           setIncidents(payload.incidents);
-          setApiStatus(payload?.cacheMeta?.mode || "live");
           return;
         }
-        setApiStatus("fallback-mock");
       } catch (error) {
-        setApiStatus("fallback-mock");
+        setApiStatus("loading");
       }
     }
 
@@ -123,14 +318,15 @@ export default function AppWeb() {
   }, []);
 
   useEffect(() => {
+    if (!isLiveDataReady) return;
     if (!mapContainerRef.current || mapRef.current || !mapToken) return;
 
     mapboxgl.accessToken = mapToken;
     mapRef.current = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: "mapbox://styles/mapbox/dark-v11",
-      center: [30.5234, 50.4501],
-      zoom: 9.7,
+      center: [31.2, 48.7],
+      zoom: 5.6,
       pitch: 20,
       attributionControl: false,
     });
@@ -148,13 +344,31 @@ export default function AppWeb() {
         mapRef.current = null;
       }
     };
-  }, [mapToken]);
+  }, [mapToken, isLiveDataReady]);
 
   useEffect(() => {
     if (!mapRef.current) return;
 
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
+
+    const applyRiskAreas = () => {
+      ensureRiskAreaLayers(mapRef.current);
+      const source = mapRef.current.getSource("risk-areas");
+      const polygonSource = mapRef.current.getSource("risk-area-polygons");
+      if (source) {
+        source.setData(buildRiskAreasGeoJSON(incidents));
+      }
+      if (polygonSource) {
+        polygonSource.setData(buildRiskAreaPolygonsGeoJSON(incidents));
+      }
+    };
+
+    if (mapRef.current.isStyleLoaded()) {
+      applyRiskAreas();
+    } else {
+      mapRef.current.once("load", applyRiskAreas);
+    }
 
     incidents.forEach((incident) => {
       if (!incident.coordinates) return;
@@ -166,11 +380,11 @@ export default function AppWeb() {
         .setLngLat([incident.coordinates.lng, incident.coordinates.lat])
         .setPopup(
           new mapboxgl.Popup({ offset: 18 }).setHTML(
-            `<div style="font-family:Arial,sans-serif;min-width:220px">` +
-              `<strong>${incident.title}</strong><br/>` +
-              `<span>${incident.region} | ${incident.source}</span><br/>` +
-              `<span>Confidence: ${incident.confidenceScore}/5</span><br/>` +
-              `<span>Advice: ${incident.advice}</span>` +
+            `<div style="min-width:240px;padding:10px 12px;border-radius:10px;background:#f8fafc;color:#0f172a;font-family:'Trebuchet MS','Segoe UI',sans-serif;line-height:1.4;">` +
+              `<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:6px;">${incident.title}</div>` +
+              `<div style="font-size:12px;color:#334155;margin-bottom:4px;">${incident.region} | ${incident.source}</div>` +
+              `<div style="font-size:12px;color:#1e293b;margin-bottom:3px;">Confidence: ${incident.confidenceScore}/5</div>` +
+              `<div style="font-size:12px;color:#1e293b;">Advice: ${incident.advice}</div>` +
               `</div>`,
           ),
         )
@@ -178,6 +392,32 @@ export default function AppWeb() {
 
       markersRef.current.push(marker);
     });
+
+    if (!hasFittedMapRef.current) {
+      const coords = incidents
+        .filter(
+          (incident) =>
+            incident?.coordinates?.lat && incident?.coordinates?.lng,
+        )
+        .map((incident) => [
+          incident.coordinates.lng,
+          incident.coordinates.lat,
+        ]);
+
+      if (coords.length > 1) {
+        const bounds = coords.reduce(
+          (acc, [lng, lat]) => acc.extend([lng, lat]),
+          new mapboxgl.LngLatBounds(coords[0], coords[0]),
+        );
+        mapRef.current.fitBounds(bounds, {
+          padding: 70,
+          maxZoom: 6.2,
+          duration: 900,
+        });
+      }
+
+      hasFittedMapRef.current = true;
+    }
   }, [incidents]);
 
   async function triggerDemoUpdate() {
@@ -224,6 +464,20 @@ export default function AppWeb() {
     );
   }
 
+  if (!isLiveDataReady) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.loadingWrap}>
+          <div style={styles.loadingPulse} />
+          <h2 style={styles.loadingTitle}>Safe Zone wordt geladen</h2>
+          <p style={styles.loadingText}>
+            Wachten op live data van de bronnen...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.topBar}>
@@ -233,7 +487,7 @@ export default function AppWeb() {
             Live safety updates for civilians in conflict areas
           </p>
         </div>
-        <div style={styles.badge}>Kyiv | Web Demo</div>
+        <div style={styles.badge}>Ukraine | Web Demo</div>
       </div>
 
       <div style={styles.apiStatus}>API status: {apiStatus}</div>
@@ -254,26 +508,50 @@ export default function AppWeb() {
           </div>
 
           <div style={styles.feedList}>
-            {incidents.map((incident) => (
-              <div key={incident.id} style={styles.feedItem}>
-                <div style={styles.feedItemTitleRow}>
-                  <strong style={styles.feedItemTitle}>{incident.title}</strong>
-                  <span
-                    style={{
-                      ...styles.dot,
-                      backgroundColor: scoreColor(incident.confidenceScore),
-                    }}
-                  />
-                </div>
-                <div style={styles.feedMeta}>
-                  {incident.region} | {incident.source} | {incident.time}
-                </div>
-                <div style={styles.feedMeta}>
-                  Confidence: {incident.confidenceScore}/5 | Advice:{" "}
-                  {incident.advice}
-                </div>
+            {activeIncidents.length === 0 ? (
+              <div style={styles.feedEmptyState}>
+                Geen actieve meldingen op dit moment.
               </div>
-            ))}
+            ) : (
+              activeIncidents.map((incident) => (
+                <div key={incident.id} style={styles.feedItem}>
+                  <div style={styles.feedItemTitleRow}>
+                    <strong style={styles.feedItemTitle}>
+                      {incident.title}
+                    </strong>
+                    <span
+                      style={{
+                        ...styles.dot,
+                        backgroundColor: scoreColor(incident.confidenceScore),
+                      }}
+                    />
+                  </div>
+                  <div style={styles.feedMeta}>
+                    {incident.region} | {incident.source} |{" "}
+                    {formatRelativeTime(incident.time)}
+                  </div>
+                  <div style={styles.feedMeta}>
+                    Confidence: {incident.confidenceScore}/5 | Advice:{" "}
+                    {incident.advice}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div style={styles.feedLegend}>
+            <div style={styles.feedLegendTitle}>Legenda</div>
+            <div style={styles.feedLegendRow}>
+              <span style={{ ...styles.legendItem, borderColor: "#ef4444" }}>
+                Rood: onveilig
+              </span>
+              <span style={{ ...styles.legendItem, borderColor: "#f59e0b" }}>
+                Geel: gemiddeld
+              </span>
+              <span style={{ ...styles.legendItem, borderColor: "#22c55e" }}>
+                Groen: veilig
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -328,6 +606,14 @@ const styles = {
     letterSpacing: "0.4px",
     textTransform: "uppercase",
   },
+  legendItem: {
+    border: "1px solid",
+    borderRadius: "999px",
+    padding: "6px 10px",
+    fontSize: "12px",
+    color: "#e2e8f0",
+    background: "rgba(15, 23, 42, 0.85)",
+  },
   layout: {
     display: "grid",
     gridTemplateColumns: "1.6fr 1fr",
@@ -379,17 +665,44 @@ const styles = {
     cursor: "pointer",
   },
   feedList: {
+    flex: 1,
     overflowY: "auto",
     padding: "8px",
     display: "flex",
     flexDirection: "column",
     gap: "8px",
   },
+  feedLegend: {
+    borderTop: "1px solid #1e293b",
+    padding: "10px 10px 12px",
+    background: "#0b1220",
+  },
+  feedLegendTitle: {
+    color: "#cbd5e1",
+    fontSize: "12px",
+    marginBottom: "7px",
+    textTransform: "uppercase",
+    letterSpacing: "0.6px",
+    fontWeight: 700,
+  },
+  feedLegendRow: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
   feedItem: {
     background: "#111b2d",
     border: "1px solid #1f2a40",
     borderRadius: "10px",
     padding: "10px",
+  },
+  feedEmptyState: {
+    background: "#0f172a",
+    border: "1px dashed #334155",
+    color: "#94a3b8",
+    borderRadius: "10px",
+    padding: "12px",
+    fontSize: "13px",
   },
   feedItemTitleRow: {
     display: "flex",
@@ -435,5 +748,31 @@ const styles = {
   missingText: {
     margin: 0,
     color: "#fca5a5",
+  },
+  loadingWrap: {
+    minHeight: "80vh",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+  },
+  loadingPulse: {
+    width: "58px",
+    height: "58px",
+    borderRadius: "999px",
+    border: "3px solid rgba(59, 130, 246, 0.45)",
+    borderTopColor: "#ef4444",
+    animation: "spin 0.9s linear infinite",
+  },
+  loadingTitle: {
+    margin: 0,
+    color: "#f8fafc",
+    fontSize: "26px",
+  },
+  loadingText: {
+    margin: 0,
+    color: "#93c5fd",
+    fontSize: "14px",
   },
 };

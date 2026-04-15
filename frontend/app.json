@@ -3,9 +3,16 @@
     "name": "Safe Zone",
     "slug": "safe-zone",
     "version": "1.0.0",
-    "platforms": ["ios", "android", "web"],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "web": {
       "name": "Safe Zone"
-    }
+    },
+    "plugins": [
+      "expo-font"
+    ]
   }
 }
