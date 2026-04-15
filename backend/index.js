@@ -208,7 +208,6 @@ async function refreshIncidents() {
   }
 }
 
-
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
@@ -258,6 +257,9 @@ app.post("/api/demo/trigger-update", (req, res) => {
 // Start server
 async function start() {
   const mongoConnected = await initMongoDB();
+
+  await refreshIncidents();
+  setInterval(refreshIncidents, REFRESH_INTERVAL_MS);
 
   app.listen(PORT, () => {
     console.log(`\n✓ Safe Zone API listening on http://localhost:${PORT}`);
