@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import axios from "axios";
+import { MongoClient } from "mongodb";
 import { mockIncidents, mockDemoUpdate } from "../shared/mockIncidents.js";
 
 dotenv.config();
@@ -20,11 +21,11 @@ const MONGODB_URI =
 const AIR_ALERT_PRIMARY_URL = process.env.AIR_ALERT_PRIMARY_URL || "";
 const AIR_ALERT_FALLBACK_URL = process.env.AIR_ALERT_FALLBACK_URL || "";
 
-let mongoose = null;
-let Incident = null;
+let mongoClient = null;
+let incidentsCollection = null;
 
 function isMongoConnected() {
-  return Boolean(mongoose && mongoose.connection.readyState === 1);
+  return Boolean(mongoClient && incidentsCollection);
 }
 
 // Initialize MongoDB connection
@@ -36,15 +37,16 @@ async function initMongoDB() {
 
   try {
     console.log("ℹ Connecting to MongoDB...");
-    const [{ default: mongooseModule }, { default: IncidentModel }] =
-      await Promise.all([import("mongoose"), import("./models/Incident.js")]);
-
-    mongoose = mongooseModule;
-    Incident = IncidentModel;
-
-    await mongoose.connect(MONGODB_URI, {
+    mongoClient = new MongoClient(MONGODB_URI, {
       serverSelectionTimeoutMS: 3000,
+      connectTimeoutMS: 3000,
+      directConnection: true,
     });
+
+    await mongoClient.connect();
+    const database = mongoClient.db();
+    incidentsCollection = database.collection("incidents");
+
     console.log("✓ MongoDB connected:", MONGODB_URI);
     return true;
   } catch (error) {
@@ -172,8 +174,8 @@ async function refreshIncidents() {
 
       // Save to MongoDB if connected
       if (isMongoConnected()) {
-        await Incident.deleteMany({});
-        await Incident.insertMany(primaryIncidents);
+        await incidentsCollection.deleteMany({});
+        await incidentsCollection.insertMany(primaryIncidents);
       }
 
       cacheMeta = {
@@ -195,8 +197,8 @@ async function refreshIncidents() {
 
       // Save to MongoDB if connected
       if (isMongoConnected()) {
-        await Incident.deleteMany({});
-        await Incident.insertMany(fallbackIncidents);
+        await incidentsCollection.deleteMany({});
+        await incidentsCollection.insertMany(fallbackIncidents);
       }
 
       cacheMeta = {
