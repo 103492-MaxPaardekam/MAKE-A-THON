@@ -10,5 +10,5 @@
   "confidenceScore": "number (1-5)",
   "validationStatus": "verified|unverified|conflicting|unknown",
   "status": "low|medium|high",
-  "advice": "danger|caution|safe"
+  "advice": "gevaar|let op|veilig"
 }
