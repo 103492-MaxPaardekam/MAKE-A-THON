@@ -1,0 +1,14 @@
+{
+  "title": "string",
+  "region": "string",
+  "coordinates": {
+    "lat": "number|null",
+    "lng": "number|null"
+  },
+  "time": "ISO-8601 string",
+  "source": "string",
+  "confidenceScore": "number (1-5)",
+  "validationStatus": "verified|unverified|conflicting|unknown",
+  "status": "low|medium|high",
+  "advice": "danger|caution|safe"
+}
