@@ -1,5 +1,12 @@
 ## Plan: Save The World Crisis Helper MVP
 
+## Bijbehorende skills (.github/skills)
+
+- frontend-design: Voor webinterface, UX-flow en kaartpresentatie van de MVP.
+- webapp-testing: Voor scenario-tests, validatie van demo-flow en regressiechecks.
+- doc-coauthoring: Voor structuur en kwaliteit van planning, beslislog en pitchdocumentatie.
+- internal-comms: Voor heldere statusupdates, rolverdeling en teamafspraken.
+
 TL;DR: Bouw in 3 dagen een webapp + mobiele wrapper met gedeelde backend die burgers realtime, betrouwbaar en begrijpelijk informeert over veiligheid in conflictgebieden. Focus op 1 sterke demo-flow die binnen 10 minuten te pitchen is.
 
 **Steps**

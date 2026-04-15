@@ -1,5 +1,12 @@
 ## Stappenplan voor AI-agent: Save The World Crisis Helper MVP
 
+## Bijbehorende skills (.github/skills)
+
+- doc-coauthoring: Voor stap-voor-stap documentstructuur en consistente deliverables.
+- frontend-design: Voor uitvoering van UI- en kaartgerichte stappen in de MVP.
+- webapp-testing: Voor validatiechecks, failure drills en end-to-end scenario's.
+- internal-comms: Voor heldere outputblokken en afstemming met gebruiker/team.
+
 Dit document beschrijft wat jij (de AI-agent) per stap moet doen. Het is geschreven DUIDELIJK VOOR JOU, niet voor de gebruiker.
 
 ### Protocol per stap (BINDEND)

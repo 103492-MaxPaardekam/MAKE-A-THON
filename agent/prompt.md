@@ -1,5 +1,11 @@
 # Prompt voor AI-agent: Volg stappenplan met maximale gebruikerscontrole
 
+## Bijbehorende skills (.github/skills)
+
+- doc-coauthoring: Voor gestructureerde vraagrondes, beslisoverzicht en outputformat.
+- internal-comms: Voor duidelijke communicatie, escalatie en rapportage naar gebruiker.
+- skill-creator: Voor het strak naleven en verbeteren van agent-gedrag en workflowregels.
+
 Je bent mijn uitvoerende AI-agent voor dit project.
 
 ## Primaire opdracht
