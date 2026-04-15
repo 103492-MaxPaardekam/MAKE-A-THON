@@ -15,11 +15,29 @@ const PORT = Number(process.env.PORT || 3001);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30000);
 const ENABLE_DEMO_MODE = process.env.ENABLE_DEMO_MODE !== "false";
 const ENABLE_MONGODB = process.env.ENABLE_MONGODB === "true";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "safezone2026";
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/safe-zone";
 
 const AIR_ALERT_PRIMARY_URL = process.env.AIR_ALERT_PRIMARY_URL || "";
 const AIR_ALERT_FALLBACK_URL = process.env.AIR_ALERT_FALLBACK_URL || "";
+
+const MANUAL_ZONE_REASONS = {
+  high: ["Luchtaanval", "Beschietingen", "Explosies", "Mijnenveld"],
+  medium: [
+    "Troepenbeweging",
+    "Wegblokkade",
+    "Beperkte toegang",
+    "Onbekende dreiging",
+  ],
+  low: [
+    "Schuilplaats beschikbaar",
+    "Hulppost",
+    "Vrij doorgaan",
+    "Rustig gebied",
+  ],
+};
 
 const UKRAINE_OBLAST_COORDS = {
   "Vinnytsia oblast": { lat: 49.2331, lng: 28.4682 },
@@ -157,6 +175,71 @@ function adviceFromStatus(status = "medium") {
   if (status === "high") return "gevaar";
   if (status === "low") return "veilig";
   return "let op";
+}
+
+function parseBasicAuthHeader(headerValue = "") {
+  if (!headerValue || !headerValue.startsWith("Basic ")) {
+    return null;
+  }
+
+  try {
+    const encoded = headerValue.slice(6);
+    const decoded = Buffer.from(encoded, "base64").toString("utf8");
+    const [username, ...rest] = decoded.split(":");
+    return {
+      username: username || "",
+      password: rest.join(":"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getAuthCredentials(req) {
+  const headerCredentials = parseBasicAuthHeader(req.headers.authorization);
+  if (headerCredentials) return headerCredentials;
+
+  const username = req.body?.username;
+  const password = req.body?.password;
+  if (username && password) {
+    return { username, password };
+  }
+
+  return null;
+}
+
+function requireAdmin(req, res, next) {
+  const credentials = getAuthCredentials(req);
+
+  if (
+    !credentials ||
+    credentials.username !== ADMIN_USERNAME ||
+    credentials.password !== ADMIN_PASSWORD
+  ) {
+    return res.status(401).json({
+      ok: false,
+      message: "Admin authentication required",
+    });
+  }
+
+  return next();
+}
+
+function cleanMongoDoc(doc) {
+  if (!doc) return doc;
+  const { _id, ...rest } = doc;
+  return rest;
+}
+
+async function loadUserZonesFromMongo() {
+  if (!isMongoConnected()) return [];
+
+  const userZones = await incidentsCollection
+    .find({ userCreated: true })
+    .sort({ time: -1 })
+    .toArray();
+
+  return withIds(userZones.map(cleanMongoDoc));
 }
 
 function normalizeSafeLocations() {
@@ -345,12 +428,23 @@ async function refreshIncidents() {
     );
 
     const safeLocations = normalizeSafeLocations();
+    const persistedUserZones = await loadUserZonesFromMongo();
+    const cachedUserZones = incidentCache.filter((item) => item.userCreated);
+
+    const userZoneMap = new Map();
+    [...cachedUserZones, ...persistedUserZones].forEach((zone) => {
+      if (zone?.id) {
+        userZoneMap.set(zone.id, zone);
+      }
+    });
+    const userZones = Array.from(userZoneMap.values());
 
     // Combine multiple sources: alerts + seismic + safe locations
     const combined = [
       ...primaryIncidents,
       ...fallbackIncidents.slice(0, 5),
       ...safeLocations,
+      ...userZones,
     ];
 
     if (combined.length > 0) {
@@ -358,13 +452,17 @@ async function refreshIncidents() {
 
       // Save to MongoDB if connected
       if (isMongoConnected()) {
-        await incidentsCollection.deleteMany({});
-        await incidentsCollection.insertMany(combined);
+        const nonUserIncidents = combined.filter((item) => !item.userCreated);
+        await incidentsCollection.deleteMany({ userCreated: { $ne: true } });
+        if (nonUserIncidents.length > 0) {
+          await incidentsCollection.insertMany(nonUserIncidents);
+        }
       }
 
       const sourceList = [
         primaryIncidents.length > 0 && "air-alert-ukraine",
         fallbackIncidents.length > 0 && "seismic-usgs",
+        userZones.length > 0 && "manual-zones",
       ]
         .filter(Boolean)
         .join(", ");
@@ -412,6 +510,140 @@ app.get("/api/incidents", (req, res) => {
   });
 });
 
+app.get("/api/zones/reasons", (req, res) => {
+  res.json({ ok: true, reasons: MANUAL_ZONE_REASONS });
+});
+
+app.post("/api/zones", async (req, res) => {
+  try {
+    const status = req.body?.status;
+    const reason = req.body?.reason;
+    const coordinates = req.body?.coordinates || {};
+    const lat = Number(coordinates.lat);
+    const lng = Number(coordinates.lng);
+
+    if (!["high", "medium", "low"].includes(status)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid status",
+      });
+    }
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid coordinates",
+      });
+    }
+
+    if (!MANUAL_ZONE_REASONS[status]?.includes(reason)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid reason for selected status",
+      });
+    }
+
+    const zone = {
+      id: `zone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: `${reason} - handmatig gemarkeerd`,
+      region: req.body?.region || "Custom zone",
+      coordinates: { lat, lng },
+      time: new Date().toISOString(),
+      source: "manual",
+      confidenceScore: 2,
+      validationStatus: "unverified",
+      status,
+      advice: adviceFromStatus(status),
+      reason,
+      userCreated: true,
+    };
+
+    if (isMongoConnected()) {
+      await incidentsCollection.insertOne(zone);
+    }
+
+    incidentCache = withIds([zone, ...incidentCache]);
+    cacheMeta = {
+      ...cacheMeta,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    return res.status(201).json({ ok: true, zone });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to create zone",
+      error: error?.message,
+    });
+  }
+});
+
+app.get("/api/zones/unverified", requireAdmin, async (req, res) => {
+  try {
+    let zones = incidentCache.filter(
+      (item) => item.userCreated && item.validationStatus === "unverified",
+    );
+
+    if (isMongoConnected()) {
+      const persisted = await incidentsCollection
+        .find({ userCreated: true, validationStatus: "unverified" })
+        .sort({ time: -1 })
+        .toArray();
+      zones = withIds(persisted.map(cleanMongoDoc));
+    }
+
+    return res.json({ ok: true, zones });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to load unverified zones",
+      error: error?.message,
+    });
+  }
+});
+
+app.patch("/api/zones/:id/verify", requireAdmin, async (req, res) => {
+  const zoneId = req.params.id;
+  const index = incidentCache.findIndex((item) => item.id === zoneId);
+
+  if (index === -1) {
+    return res.status(404).json({ ok: false, message: "Zone not found" });
+  }
+
+  incidentCache[index] = {
+    ...incidentCache[index],
+    validationStatus: "verified",
+  };
+
+  if (isMongoConnected()) {
+    await incidentsCollection.updateOne(
+      { id: zoneId, userCreated: true },
+      { $set: { validationStatus: "verified" } },
+    );
+  }
+
+  return res.json({ ok: true, zone: incidentCache[index] });
+});
+
+app.delete("/api/zones/:id", async (req, res) => {
+  const zoneId = req.params.id;
+  const existing = incidentCache.find(
+    (item) => item.id === zoneId && item.userCreated,
+  );
+
+  if (!existing) {
+    return res.status(404).json({ ok: false, message: "Zone not found" });
+  }
+
+  incidentCache = incidentCache.filter((item) => item.id !== zoneId);
+
+  if (isMongoConnected()) {
+    await incidentsCollection.deleteOne({ id: zoneId, userCreated: true });
+  }
+
+  return res.json({ ok: true, deletedId: zoneId });
+});
+
 app.post("/api/demo/trigger-update", (req, res) => {
   if (!ENABLE_DEMO_MODE) {
     return res.status(403).json({
@@ -444,6 +676,17 @@ app.post("/api/demo/trigger-update", (req, res) => {
 // Start server
 async function start() {
   const mongoConnected = await initMongoDB();
+
+  if (mongoConnected) {
+    const startupUserZones = await loadUserZonesFromMongo();
+    if (startupUserZones.length > 0) {
+      const map = new Map();
+      [...incidentCache, ...startupUserZones].forEach((item) => {
+        if (item?.id) map.set(item.id, item);
+      });
+      incidentCache = withIds(Array.from(map.values()));
+    }
+  }
 
   await refreshIncidents();
   setInterval(refreshIncidents, REFRESH_INTERVAL_MS);

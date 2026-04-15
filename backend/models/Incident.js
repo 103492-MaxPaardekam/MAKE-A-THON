@@ -27,6 +27,7 @@ const IncidentSchema = new mongoose.Schema(
         "icrc",
         "crowd-sourced",
         "mock",
+        "manual",
       ],
       default: "mock",
     },
@@ -49,6 +50,14 @@ const IncidentSchema = new mongoose.Schema(
     advice: {
       type: String,
       default: "let op",
+    },
+    reason: {
+      type: String,
+      default: "",
+    },
+    userCreated: {
+      type: Boolean,
+      default: false,
     },
   },
   {

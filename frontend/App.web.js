@@ -1,101 +1,80 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { motion, AnimatePresence } from "framer-motion";
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
-const C = {
-  bgBase: "#05090f",
-  bgSurface: "#0a1220",
-  bgElevated: "#0e1a2e",
-  bgCard: "#0c1628",
-
-  borderSubtle: "rgba(148,163,184,0.07)",
-  borderDefault: "rgba(148,163,184,0.12)",
-
-  textPrimary: "#f0f4f8",
-  textSecondary: "#8a9bae",
-  textMuted: "#3d4f62",
-
-  accentBlue: "#3b82f6",
-  accentBlueDim: "rgba(59,130,246,0.13)",
-
+const COLORS = {
+  page: "#060a14",
+  mapCard: "#0b1220",
+  feedCard: "#0f172a",
+  border: "#1e293b",
+  text: "#e2e8f0",
+  textDim: "#94a3b8",
   high: "#ef4444",
-  highDim: "rgba(239,68,68,0.11)",
-  highBorder: "rgba(239,68,68,0.28)",
-
   medium: "#f59e0b",
-  mediumDim: "rgba(245,158,11,0.11)",
-  mediumBorder: "rgba(245,158,11,0.26)",
-
   low: "#22c55e",
-  lowDim: "rgba(34,197,94,0.09)",
-  lowBorder: "rgba(34,197,94,0.20)",
-
-  font: "'Manrope', system-ui, -apple-system, sans-serif",
-  fontDisplay: "'Sora', 'Manrope', system-ui, sans-serif",
+  unverified: "#64748b",
 };
 
-// ─── Status helpers ───────────────────────────────────────────────────────────
-function statusMeta(status) {
-  if (status === "high")
-    return {
-      color: C.high,
-      bg: C.highDim,
-      border: C.highBorder,
-      label: "HIGH",
-    };
-  if (status === "medium")
-    return {
-      color: C.medium,
-      bg: C.mediumDim,
-      border: C.mediumBorder,
-      label: "MED",
-    };
-  return { color: C.low, bg: C.lowDim, border: C.lowBorder, label: "LOW" };
+const MANUAL_ZONE_REASONS = {
+  high: ["Luchtaanval", "Beschietingen", "Explosies", "Mijnenveld"],
+  medium: [
+    "Troepenbeweging",
+    "Wegblokkade",
+    "Beperkte toegang",
+    "Onbekende dreiging",
+  ],
+  low: [
+    "Schuilplaats beschikbaar",
+    "Hulppost",
+    "Vrij doorgaan",
+    "Rustig gebied",
+  ],
+};
+
+const API_BASE_URLS = [
+  process.env.EXPO_PUBLIC_API_BASE_URL,
+  process.env.REACT_APP_API_BASE_URL,
+  "http://localhost:3001",
+  "http://127.0.0.1:3001",
+].filter(Boolean);
+
+function formatRelativeTime(iso) {
+  if (!iso) return "zojuist";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return String(iso);
+  const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+  if (mins < 1) return "zojuist";
+  if (mins < 60) return `${mins} min geleden`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} uur geleden`;
+  return `${Math.floor(hrs / 24)} dag(en) geleden`;
 }
 
-function scoreColor(score) {
-  if (score >= 5) return C.high;
-  if (score >= 4) return C.medium;
-  if (score >= 3) return "#f59e0b";
-  if (score >= 2) return "#84cc16";
-  return C.low;
-}
-
-function markerColorFromStatus(status) {
-  if (status === "high") return C.high;
-  if (status === "medium") return C.medium;
-  return C.low;
-}
-
-function formatRelativeTime(isoTime) {
-  if (!isoTime) return "zojuist";
-  const ts = Date.parse(isoTime);
-  if (Number.isNaN(ts)) return isoTime; // keep "Now", "12 min ago", etc.
-  const diffMin = Math.floor((Date.now() - ts) / 60000);
-  if (diffMin < 1) return "zojuist";
-  if (diffMin < 60) return `${diffMin} min geleden`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `${diffH}u geleden`;
-  return `${Math.floor(diffH / 24)}d geleden`;
-}
-
-const STATUS_ORDER = { high: 0, medium: 1, low: 2 };
-
-// ─── Mapbox helpers (logic unchanged) ────────────────────────────────────────
 function getAreaRadiusKm(incident) {
+  if (incident?.source === "manual" && incident?.status === "low") return 10;
   if (incident?.status === "high") return 60;
   if (incident?.status === "medium") return 35;
-  if (incident?.source === "safe-locations-kyiv") return 8;
   return 20;
 }
 
-function createAreaPolygon(lng, lat, radiusKm, steps = 24) {
+function markerColor(incident) {
+  if (incident?.validationStatus === "unverified") return COLORS.unverified;
+  if (incident?.status === "high") return COLORS.high;
+  if (incident?.status === "medium") return COLORS.medium;
+  return COLORS.low;
+}
+
+function createAreaPolygon(lng, lat, radiusKm, steps = 28) {
   const coords = [];
   const latRadius = radiusKm / 111.32;
   const lngRadius = radiusKm / (111.32 * Math.cos((lat * Math.PI) / 180));
-  for (let i = 0; i <= steps; i++) {
+  for (let i = 0; i <= steps; i += 1) {
     const angle = (i / steps) * Math.PI * 2;
     coords.push([
       lng + lngRadius * Math.cos(angle),
@@ -105,7 +84,7 @@ function createAreaPolygon(lng, lat, radiusKm, steps = 24) {
   return coords;
 }
 
-function buildRiskAreasGeoJSON(incidents) {
+function buildCenters(incidents) {
   return {
     type: "FeatureCollection",
     features: incidents
@@ -114,12 +93,8 @@ function buildRiskAreasGeoJSON(incidents) {
         type: "Feature",
         properties: {
           id: i.id,
-          title: i.title,
-          region: i.region,
-          source: i.source,
           status: i.status || "medium",
-          advice: i.advice || "let op",
-          confidenceScore: Number(i.confidenceScore || 3),
+          validationStatus: i.validationStatus || "unknown",
         },
         geometry: {
           type: "Point",
@@ -129,7 +104,7 @@ function buildRiskAreasGeoJSON(incidents) {
   };
 }
 
-function buildRiskAreaPolygonsGeoJSON(incidents) {
+function buildPolygons(incidents) {
   return {
     type: "FeatureCollection",
     features: incidents
@@ -139,8 +114,7 @@ function buildRiskAreaPolygonsGeoJSON(incidents) {
         properties: {
           id: i.id,
           status: i.status || "medium",
-          source: i.source,
-          title: i.title,
+          validationStatus: i.validationStatus || "unknown",
         },
         geometry: {
           type: "Polygon",
@@ -156,584 +130,386 @@ function buildRiskAreaPolygonsGeoJSON(incidents) {
   };
 }
 
-function ensureRiskAreaLayers(map) {
-  if (map.getSource("risk-areas") && map.getSource("risk-area-polygons"))
-    return;
+function ensureRiskLayers(map) {
+  if (!map.getSource("risk-centers")) {
+    map.addSource("risk-centers", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    });
+  }
 
-  map.addSource("risk-areas", {
-    type: "geojson",
-    data: { type: "FeatureCollection", features: [] },
-  });
-  map.addSource("risk-area-polygons", {
-    type: "geojson",
-    data: { type: "FeatureCollection", features: [] },
-  });
+  if (!map.getSource("risk-polygons")) {
+    map.addSource("risk-polygons", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    });
+  }
 
-  map.addLayer({
-    id: "risk-area-fill",
-    type: "fill",
-    source: "risk-area-polygons",
-    paint: {
-      "fill-color": [
-        "match",
-        ["get", "status"],
-        "high",
-        "#dc2626",
-        "medium",
-        "#f59e0b",
-        "#22c55e",
-      ],
-      "fill-opacity": 0.18,
-    },
-  });
-  map.addLayer({
-    id: "risk-area-outline",
-    type: "line",
-    source: "risk-area-polygons",
-    paint: {
-      "line-color": [
-        "match",
-        ["get", "status"],
-        "high",
-        "#fca5a5",
-        "medium",
-        "#fde68a",
-        "#86efac",
-      ],
-      "line-width": 1.5,
-      "line-opacity": 0.7,
-    },
-  });
-  map.addLayer({
-    id: "risk-areas-fill",
-    type: "circle",
-    source: "risk-areas",
-    paint: {
-      "circle-radius": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        4,
-        4,
-        8,
-        6,
-        11,
-        10,
-      ],
-      "circle-color": [
-        "match",
-        ["get", "status"],
-        "high",
-        "#ef4444",
-        "medium",
-        "#f59e0b",
-        "#22c55e",
-      ],
-      "circle-opacity": 0.25,
-      "circle-stroke-width": 1.2,
-      "circle-stroke-color": [
-        "match",
-        ["get", "status"],
-        "high",
-        "#fca5a5",
-        "medium",
-        "#fde68a",
-        "#86efac",
-      ],
-    },
-  });
+  if (!map.getLayer("risk-polygons-fill")) {
+    map.addLayer({
+      id: "risk-polygons-fill",
+      type: "fill",
+      source: "risk-polygons",
+      paint: {
+        "fill-color": [
+          "case",
+          ["==", ["get", "validationStatus"], "unverified"],
+          COLORS.unverified,
+          [
+            "match",
+            ["get", "status"],
+            "high",
+            COLORS.high,
+            "medium",
+            COLORS.medium,
+            COLORS.low,
+          ],
+        ],
+        "fill-opacity": [
+          "case",
+          ["==", ["get", "validationStatus"], "unverified"],
+          0.14,
+          0.23,
+        ],
+      },
+    });
+  }
+
+  if (!map.getLayer("risk-polygons-line")) {
+    map.addLayer({
+      id: "risk-polygons-line",
+      type: "line",
+      source: "risk-polygons",
+      paint: {
+        "line-color": [
+          "case",
+          ["==", ["get", "validationStatus"], "unverified"],
+          "#94a3b8",
+          [
+            "match",
+            ["get", "status"],
+            "high",
+            "#fca5a5",
+            "medium",
+            "#fde68a",
+            "#86efac",
+          ],
+        ],
+        "line-width": 1.6,
+        "line-opacity": 0.85,
+      },
+    });
+  }
+
+  if (!map.getLayer("risk-centers")) {
+    map.addLayer({
+      id: "risk-centers",
+      type: "circle",
+      source: "risk-centers",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4,
+          3,
+          8,
+          5,
+          11,
+          8,
+        ],
+        "circle-color": [
+          "case",
+          ["==", ["get", "validationStatus"], "unverified"],
+          COLORS.unverified,
+          [
+            "match",
+            ["get", "status"],
+            "high",
+            COLORS.high,
+            "medium",
+            COLORS.medium,
+            COLORS.low,
+          ],
+        ],
+        "circle-opacity": 0.3,
+        "circle-stroke-width": 1,
+        "circle-stroke-color": "#e2e8f0",
+      },
+    });
+  }
 }
 
-// ─── API helpers ──────────────────────────────────────────────────────────────
-const API_BASE_URL_CANDIDATES = [
-  process.env.EXPO_PUBLIC_API_BASE_URL,
-  process.env.REACT_APP_API_BASE_URL,
-  "http://localhost:3001",
-  "http://127.0.0.1:3001",
-].filter(Boolean);
-
-async function fetchFromApi(path, options) {
+async function fetchFromApi(path, options = {}) {
   let lastError = null;
-  for (const baseUrl of API_BASE_URL_CANDIDATES) {
+  for (const base of API_BASE_URLS) {
     try {
-      const response = await fetch(`${baseUrl}${path}`, options);
-      if (!response.ok) throw new Error(`API ${response.status} on ${baseUrl}`);
-      return { payload: await response.json(), baseUrl };
+      const response = await fetch(`${base}${path}`, options);
+      if (!response.ok) {
+        const msg = await response.text();
+        throw new Error(msg || `API ${response.status}`);
+      }
+      return await response.json();
     } catch (error) {
       lastError = error;
     }
   }
-  throw lastError || new Error("All API base URLs failed");
+  throw lastError || new Error("API niet bereikbaar");
 }
 
-// ─── Seed data ────────────────────────────────────────────────────────────────
-const incidentsSeed = [
-  {
-    id: "inc-1",
-    title: "Air raid alert - Kyiv downtown",
-    region: "Kyiv",
-    coordinates: { lat: 50.4501, lng: 30.5234 },
-    source: "Air Alert Ukraine",
-    confidenceScore: 5,
-    validationStatus: "verified",
-    status: "high",
-    advice: "gevaar",
-    time: "Now",
-  },
-  {
-    id: "inc-2",
-    title: "Movement restrictions in eastern district",
-    region: "Kyiv",
-    coordinates: { lat: 50.4256, lng: 30.6432 },
-    source: "State Emergency Service",
-    confidenceScore: 4,
-    validationStatus: "verified",
-    status: "medium",
-    advice: "let op",
-    time: "12 min ago",
-  },
-  {
-    id: "inc-3",
-    title: "Safe shelter capacity updated",
-    region: "Kyiv",
-    coordinates: { lat: 50.4012, lng: 30.5498 },
-    source: "ReliefWeb",
-    confidenceScore: 4,
-    validationStatus: "verified",
-    status: "low",
-    advice: "veilig",
-    time: "23 min ago",
-  },
-];
+function buildBasicAuth(username, password) {
+  if (!username || !password) return "";
+  return `Basic ${btoa(`${username}:${password}`)}`;
+}
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+function AdminPage() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [authHeader, setAuthHeader] = useState("");
+  const [zones, setZones] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-/** Pulsing green dot for LIVE indicator */
-function LivePulseDot({ color = C.low }) {
-  return (
-    <span
-      style={{
-        position: "relative",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 10,
-        height: 10,
-      }}
-    >
-      <span
-        className="sz-pulse-ring"
-        style={{
-          position: "absolute",
-          inset: -3,
-          borderRadius: "50%",
-          border: `1px solid ${color}`,
-        }}
-      />
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          backgroundColor: color,
-          flexShrink: 0,
-        }}
-      />
-    </span>
+  const loadPendingZones = useCallback(
+    async (header = authHeader) => {
+      if (!header) return;
+      setLoading(true);
+      setError("");
+      try {
+        const payload = await fetchFromApi("/api/zones/unverified", {
+          headers: { Authorization: header },
+        });
+        setZones(payload?.zones || []);
+      } catch (e) {
+        setError(e?.message || "Kon zones niet laden");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [authHeader],
   );
-}
 
-/** Small metric pill shown in the stats row */
-function StatPill({ count, label, color }) {
+  useEffect(() => {
+    const stored = localStorage.getItem("safezone-admin-auth") || "";
+    if (stored) {
+      setAuthHeader(stored);
+      loadPendingZones(stored);
+    }
+  }, [loadPendingZones]);
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    const header = buildBasicAuth(username, password);
+    localStorage.setItem("safezone-admin-auth", header);
+    setAuthHeader(header);
+    await loadPendingZones(header);
+  }
+
+  async function verifyZone(zoneId) {
+    await fetchFromApi(`/api/zones/${zoneId}/verify`, {
+      method: "PATCH",
+      headers: {
+        Authorization: authHeader,
+        "Content-Type": "application/json",
+      },
+    });
+    await loadPendingZones();
+  }
+
+  async function rejectZone(zoneId) {
+    await fetchFromApi(`/api/zones/${zoneId}`, {
+      method: "DELETE",
+      headers: { Authorization: authHeader },
+    });
+    await loadPendingZones();
+  }
+
+  if (!authHeader) {
+    return (
+      <div style={adminStyles.page}>
+        <div style={adminStyles.card}>
+          <h1 style={adminStyles.title}>Safe Zone Admin</h1>
+          <p style={adminStyles.subtitle}>Inloggen om zones te modereren</p>
+          <form onSubmit={handleLogin} style={adminStyles.form}>
+            <input
+              style={adminStyles.input}
+              placeholder="Gebruikersnaam"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+            <input
+              style={adminStyles.input}
+              type="password"
+              placeholder="Wachtwoord"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button style={adminStyles.primaryBtn} type="submit">
+              Inloggen
+            </button>
+          </form>
+          {error ? <div style={adminStyles.error}>{error}</div> : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className="sz-stat-pill"
-      style={{
-        background:
-          "linear-gradient(180deg, rgba(15,26,46,0.9), rgba(9,16,30,0.88))",
-        border: `1px solid ${C.borderSubtle}`,
-        boxShadow:
-          "inset 0 1px 0 rgba(255,255,255,0.03), 0 6px 20px rgba(3,8,18,0.28)",
-      }}
-    >
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          backgroundColor: color,
-          flexShrink: 0,
-        }}
-      />
-      <div>
-        <div
-          className="sz-stat-pill__count"
-          style={{ color, fontFamily: C.font }}
+    <div style={adminStyles.page}>
+      <div style={adminStyles.headerRow}>
+        <h1 style={adminStyles.title}>Ongeverifieerde zones</h1>
+        <button
+          style={adminStyles.ghostBtn}
+          onClick={() => {
+            localStorage.removeItem("safezone-admin-auth");
+            setAuthHeader("");
+            setZones([]);
+          }}
         >
-          {count}
-        </div>
-        <div
-          className="sz-stat-pill__label"
-          style={{ color: C.textMuted, fontFamily: C.font }}
-        >
-          {label}
-        </div>
+          Uitloggen
+        </button>
+      </div>
+
+      {loading ? <div style={adminStyles.loading}>Laden...</div> : null}
+      {error ? <div style={adminStyles.error}>{error}</div> : null}
+
+      <div style={adminStyles.list}>
+        {zones.length === 0 ? (
+          <div style={adminStyles.empty}>Geen ongeverifieerde zones</div>
+        ) : (
+          zones.map((zone) => (
+            <div key={zone.id} style={adminStyles.item}>
+              <div style={adminStyles.itemTitle}>{zone.title}</div>
+              <div style={adminStyles.itemMeta}>
+                {zone.region} | {formatRelativeTime(zone.time)}
+              </div>
+              <div style={adminStyles.itemMeta}>
+                Reden: {zone.reason || "-"}
+              </div>
+              <div style={adminStyles.itemMeta}>
+                Locatie: {zone.coordinates?.lat?.toFixed?.(4)},{" "}
+                {zone.coordinates?.lng?.toFixed?.(4)}
+              </div>
+              <div style={adminStyles.actions}>
+                <button
+                  style={adminStyles.acceptBtn}
+                  onClick={() => verifyZone(zone.id)}
+                >
+                  Accepteren
+                </button>
+                <button
+                  style={adminStyles.rejectBtn}
+                  onClick={() => rejectZone(zone.id)}
+                >
+                  Afwijzen
+                </button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
 }
 
-/** Animated incident card */
-function IncidentCard({ incident }) {
-  const meta = statusMeta(incident.status);
-  const isDemo = String(incident.id).startsWith("inc-demo-");
-
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, x: 14 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -14 }}
-      transition={{ duration: 0.22, ease: "easeOut" }}
-      style={{
-        position: "relative",
-        background:
-          "linear-gradient(170deg, rgba(18,29,48,0.92), rgba(11,21,38,0.94))",
-        border: `1px solid ${C.borderDefault}`,
-        borderLeft: `3px solid ${meta.color}`,
-        borderRadius: 8,
-        padding: "10px 12px",
-        overflow: "hidden",
-        flexShrink: 0,
-        boxShadow: "0 8px 18px rgba(2,8,20,0.28)",
-      }}
-    >
-      {/* DEMO badge */}
-      {isDemo && (
-        <span
-          style={{
-            position: "absolute",
-            top: 8,
-            right: 8,
-            background: "#dc2626",
-            color: "#fff",
-            fontSize: 9,
-            fontWeight: 800,
-            padding: "2px 6px",
-            borderRadius: 4,
-            letterSpacing: "0.5px",
-            textTransform: "uppercase",
-            fontFamily: C.font,
-          }}
-        >
-          DEMO
-        </span>
-      )}
-
-      {/* Title row */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 8,
-          marginBottom: 6,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: C.textPrimary,
-            lineHeight: 1.4,
-            fontFamily: C.font,
-            flex: 1,
-          }}
-        >
-          {incident.title}
-        </span>
-        <span
-          style={{
-            flexShrink: 0,
-            fontSize: 9,
-            fontWeight: 700,
-            padding: "3px 7px",
-            borderRadius: 999,
-            background: meta.bg,
-            color: meta.color,
-            border: `1px solid ${meta.border}`,
-            letterSpacing: "0.6px",
-            textTransform: "uppercase",
-            fontFamily: C.font,
-          }}
-        >
-          {meta.label}
-        </span>
-      </div>
-
-      {/* Meta row */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          flexWrap: "wrap",
-          marginBottom: 7,
-        }}
-      >
-        <span
-          style={{ fontSize: 11, color: C.textSecondary, fontFamily: C.font }}
-        >
-          {incident.region}
-        </span>
-        <span
-          style={{
-            width: 2,
-            height: 2,
-            borderRadius: "50%",
-            background: C.textMuted,
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{ fontSize: 11, color: C.textSecondary, fontFamily: C.font }}
-        >
-          {incident.source}
-        </span>
-        <span
-          style={{
-            width: 2,
-            height: 2,
-            borderRadius: "50%",
-            background: C.textMuted,
-            flexShrink: 0,
-          }}
-        />
-        <span style={{ fontSize: 11, color: C.textMuted, fontFamily: C.font }}>
-          {formatRelativeTime(incident.time)}
-        </span>
-      </div>
-
-      {/* Confidence bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-        <div
-          style={{
-            flex: 1,
-            height: 3,
-            borderRadius: 999,
-            background: C.bgSurface,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${(incident.confidenceScore / 5) * 100}%`,
-              background: scoreColor(incident.confidenceScore),
-              borderRadius: 999,
-            }}
-          />
-        </div>
-        <span
-          style={{
-            fontSize: 10,
-            color: C.textMuted,
-            fontFamily: C.font,
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
-        >
-          {incident.confidenceScore}/5
-        </span>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export default function AppWeb() {
+  const pathname =
+    typeof window !== "undefined" ? window.location.pathname : "/";
+  if (pathname.startsWith("/admin")) {
+    return <AdminPage />;
+  }
+
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
   const hasFittedMapRef = useRef(false);
 
-  const [incidents, setIncidents] = useState(incidentsSeed);
+  const [incidents, setIncidents] = useState([]);
   const [apiStatus, setApiStatus] = useState("loading");
-  const [lastFetched, setLastFetched] = useState(Date.now());
-
-  const isLiveDataReady = apiStatus.startsWith("live-");
-
-  const isDemoMode = useMemo(() => {
-    const search =
-      typeof globalThis !== "undefined" && globalThis.location
-        ? globalThis.location.search || ""
-        : "";
-    return new URLSearchParams(search).get("mode") === "demo";
-  }, []);
+  const [selectedStatus, setSelectedStatus] = useState("");
+  const [selectedReason, setSelectedReason] = useState("");
+  const [placingMode, setPlacingMode] = useState(false);
+  const [zoneError, setZoneError] = useState("");
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 980 : false,
+  );
 
   const mapToken =
     process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
     process.env.REACT_APP_MAPBOX_TOKEN ||
     "";
 
-  // Sorted by severity: high → medium → low
-  const sortedIncidents = useMemo(
-    () =>
-      [...incidents].sort(
-        (a, b) =>
-          (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99),
-      ),
-    [incidents],
-  );
+  const isLive = apiStatus.startsWith("live-");
 
-  const highCount = useMemo(
-    () => incidents.filter((i) => i.status === "high").length,
-    [incidents],
-  );
-  const mediumCount = useMemo(
-    () => incidents.filter((i) => i.status === "medium").length,
-    [incidents],
-  );
-  const lowCount = useMemo(
-    () => incidents.filter((i) => i.status === "low").length,
-    [incidents],
-  );
+  const sortedIncidents = useMemo(() => {
+    const order = { high: 0, medium: 1, low: 2 };
+    return [...incidents].sort(
+      (a, b) => (order[a.status] ?? 99) - (order[b.status] ?? 99),
+    );
+  }, [incidents]);
 
-  const lastUpdatedStr = useMemo(
-    () =>
-      new Date(lastFetched).toLocaleTimeString("nl-NL", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    [lastFetched],
-  );
+  const reasonOptions = selectedStatus
+    ? MANUAL_ZONE_REASONS[selectedStatus]
+    : [];
 
-  // ── Inject Google Fonts + global CSS keyframes ──
+  const loadIncidents = useCallback(async () => {
+    try {
+      const payload = await fetchFromApi("/api/incidents");
+      setApiStatus(payload?.cacheMeta?.mode || "loading");
+      setIncidents(Array.isArray(payload?.incidents) ? payload.incidents : []);
+    } catch {
+      setApiStatus("loading");
+    }
+  }, []);
+
+  const deleteZone = useCallback(async (zoneId) => {
+    try {
+      await fetchFromApi(`/api/zones/${zoneId}`, { method: "DELETE" });
+      setIncidents((prev) => prev.filter((item) => item.id !== zoneId));
+    } catch (e) {
+      setZoneError(e?.message || "Kon zone niet verwijderen");
+    }
+  }, []);
+
   useEffect(() => {
-    const fontLink = document.createElement("link");
-    fontLink.rel = "stylesheet";
-    fontLink.href =
-      "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap";
-    document.head.appendChild(fontLink);
+    window.safeZoneDeleteZone = deleteZone;
+    return () => {
+      delete window.safeZoneDeleteZone;
+    };
+  }, [deleteZone]);
 
+  useEffect(() => {
     const styleEl = document.createElement("style");
     styleEl.textContent = `
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       html, body, #root { width: 100%; min-height: 100%; }
-      body { background: #05090f; overflow: hidden; }
-      ::-webkit-scrollbar { width: 4px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 99px; }
-      ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
-      @keyframes sz-pulse { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 0; transform: scale(2.4); } }
-      .sz-pulse-ring { animation: sz-pulse 2.2s ease-out infinite; }
+      body { margin: 0; background: ${COLORS.page}; }
+      .mapboxgl-popup-content { background: transparent !important; box-shadow: none !important; padding: 0 !important; }
+      .mapboxgl-popup-tip { border-top-color: ${COLORS.feedCard} !important; }
       @keyframes sz-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-      /* ── Layout classes ────────────────────────────────────────── */
-      .sz-page {
-        display: flex; flex-direction: column;
-        width: 100%;
-        min-height: 100vh; padding: 20px 24px;
-        box-sizing: border-box; gap: 14px;
-      }
-      .sz-page--center { align-items: center; justify-content: center; }
-
-      .sz-topbar {
-        display: flex; align-items: center;
-        justify-content: space-between; gap: 14px; flex-shrink: 0;
-      }
-      .sz-topbar-left  { flex: 1; min-width: 0; }
-      .sz-topbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
-
-      .sz-title    { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px; line-height: 1; }
-      .sz-subtitle { margin: 5px 0 0; font-size: 13px; }
-
-      .sz-stats-row   { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
-      .sz-stats-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-
-      .sz-stat-pill {
-        display: flex; align-items: center; gap: 8px;
-        border-radius: 8px; padding: 8px 14px;
-      }
-      .sz-stat-pill__count { font-size: 20px; font-weight: 700; line-height: 1; letter-spacing: -0.5px; }
-      .sz-stat-pill__label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; margin-top: 2px; font-weight: 600; }
-
-      .sz-layout {
-        display: grid; grid-template-columns: 1.65fr 1fr;
-        gap: 14px; flex: 1; min-height: 0;
-      }
-
-      .sz-map-card  { border-radius: 12px; overflow: hidden; height: calc(100vh - 192px); min-height: 480px; }
-      .sz-feed-card { border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 192px); min-height: 480px; }
-      .sz-feed-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 7px; min-height: 0; }
-
-      /* ── Tablet: 769 – 1100 px ────────────────────────────────── */
-      @media (min-width: 769px) and (max-width: 1100px) {
-        .sz-page    { padding: 16px 18px; gap: 12px; }
-        .sz-layout  { grid-template-columns: 1fr 1fr; gap: 12px; }
-        .sz-map-card  { height: calc(100vh - 205px); min-height: 360px; }
-        .sz-feed-card { height: calc(100vh - 205px); min-height: 360px; }
-        .sz-title   { font-size: 26px; }
-      }
-
-      /* ── Mobile: ≤ 768 px ─────────────────────────────────────── */
-      @media (max-width: 768px) {
-        .sz-page    { padding: 12px 14px; gap: 10px; }
-        .sz-topbar  { flex-wrap: wrap; gap: 8px; }
-        .sz-title   { font-size: 22px; }
-        .sz-subtitle { display: none; }
-        .sz-layout  { grid-template-columns: 1fr; gap: 10px; flex: none; }
-        .sz-map-card  { height: 44vh; min-height: 240px; }
-        .sz-feed-card { height: auto; min-height: 280px; max-height: 48vh; }
-        .sz-stats-right { margin-left: 0; width: 100%; }
-        .sz-stat-pill__count { font-size: 16px; }
-        .sz-stat-pill { padding: 6px 10px; gap: 6px; }
-      }
-
-      /* ── Small mobile: ≤ 480 px ───────────────────────────────── */
-      @media (max-width: 480px) {
-        .sz-page  { padding: 8px 10px; gap: 8px; }
-        .sz-title { font-size: 18px; }
-        .sz-map-card  { height: 40vh; min-height: 200px; }
-        .sz-feed-card { max-height: 44vh; }
-        .sz-topbar-right { gap: 6px; }
-      }
     `;
     document.head.appendChild(styleEl);
-
     return () => {
-      if (document.head.contains(fontLink)) document.head.removeChild(fontLink);
       if (document.head.contains(styleEl)) document.head.removeChild(styleEl);
     };
   }, []);
 
-  // ── Load incidents every 30 s ──
   useEffect(() => {
-    async function loadIncidents() {
-      try {
-        const { payload } = await fetchFromApi("/api/incidents");
-        setApiStatus(payload?.cacheMeta?.mode || "loading");
-        if (Array.isArray(payload?.incidents) && payload.incidents.length > 0) {
-          setIncidents(payload.incidents);
-          setLastFetched(Date.now());
-        }
-      } catch {
-        setApiStatus("loading");
-      }
-    }
     loadIncidents();
     const timer = setInterval(loadIncidents, 30000);
     return () => clearInterval(timer);
+  }, [loadIncidents]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onResize = () => setIsMobile(window.innerWidth <= 980);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // ── Init Mapbox ──
   useEffect(() => {
-    if (
-      !isLiveDataReady ||
-      !mapContainerRef.current ||
-      mapRef.current ||
-      !mapToken
-    )
+    if (!mapToken || !isLive || !mapContainerRef.current || mapRef.current)
       return;
 
     mapboxgl.accessToken = mapToken;
@@ -745,6 +521,7 @@ export default function AppWeb() {
       pitch: 20,
       attributionControl: false,
     });
+
     mapRef.current.addControl(
       new mapboxgl.NavigationControl({ visualizePitch: true }),
       "top-right",
@@ -758,45 +535,109 @@ export default function AppWeb() {
         mapRef.current = null;
       }
     };
-  }, [mapToken, isLiveDataReady]);
+  }, [mapToken, isLive]);
 
-  // ── Update markers & risk areas ──
+  useEffect(() => {
+    if (!mapRef.current || !mapContainerRef.current) return;
+    const map = mapRef.current;
+    const container = mapContainerRef.current;
+
+    if (placingMode && selectedStatus && selectedReason) {
+      container.style.cursor = "crosshair";
+
+      const handleClick = async (event) => {
+        // Prevent popup-open clicks on the zone-delete button inside popups
+        if (event.target && event.target.tagName === "BUTTON") return;
+
+        const rect = container.getBoundingClientRect();
+        const point = {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        };
+        const lngLat = map.unproject(point);
+
+        try {
+          await fetchFromApi("/api/zones", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: selectedStatus,
+              reason: selectedReason,
+              coordinates: {
+                lat: lngLat.lat,
+                lng: lngLat.lng,
+              },
+              region: "Handmatig gemarkeerd",
+            }),
+          });
+          setPlacingMode(false);
+          setSelectedStatus("");
+          setSelectedReason("");
+          setZoneError("");
+          await loadIncidents();
+        } catch (e) {
+          setZoneError(e?.message || "Kon zone niet aanmaken");
+        }
+      };
+
+      container.addEventListener("click", handleClick);
+      return () => {
+        container.removeEventListener("click", handleClick);
+        container.style.cursor = "";
+      };
+    }
+
+    container.style.cursor = "";
+    return undefined;
+  }, [placingMode, selectedReason, selectedStatus, loadIncidents]);
+
   useEffect(() => {
     if (!mapRef.current) return;
+    const map = mapRef.current;
 
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
-    const applyRiskAreas = () => {
-      ensureRiskAreaLayers(mapRef.current);
-      const src = mapRef.current.getSource("risk-areas");
-      const polySrc = mapRef.current.getSource("risk-area-polygons");
-      if (src) src.setData(buildRiskAreasGeoJSON(incidents));
-      if (polySrc) polySrc.setData(buildRiskAreaPolygonsGeoJSON(incidents));
+    const applyLayers = () => {
+      ensureRiskLayers(map);
+      const centers = map.getSource("risk-centers");
+      const polygons = map.getSource("risk-polygons");
+      if (centers) centers.setData(buildCenters(incidents));
+      if (polygons) polygons.setData(buildPolygons(incidents));
     };
 
-    if (mapRef.current.isStyleLoaded()) applyRiskAreas();
-    else mapRef.current.once("load", applyRiskAreas);
+    if (map.isStyleLoaded()) applyLayers();
+    else map.once("load", applyLayers);
 
     incidents.forEach((incident) => {
-      if (!incident.coordinates) return;
+      if (!incident?.coordinates?.lat || !incident?.coordinates?.lng) return;
+
+      const deleteHtml = incident.userCreated
+        ? `<button onclick="window.safeZoneDeleteZone && window.safeZoneDeleteZone('${incident.id}')" style="margin-top:8px;background:#ef4444;border:none;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;">Verwijder zone</button>`
+        : "";
+
+      const verifyHtml =
+        incident.validationStatus === "unverified"
+          ? `<div style="margin-top:6px;padding:4px 7px;border-radius:5px;background:rgba(148,163,184,0.2);color:#cbd5e1;font-size:11px;display:inline-block;">Wacht op verificatie</div>`
+          : "";
+
+      const popupHtml =
+        `<div style="min-width:250px;background:${COLORS.feedCard};color:${COLORS.text};border:1px solid ${COLORS.border};padding:12px;border-radius:10px;font-family:Manrope,system-ui,sans-serif;">` +
+        `<div style="font-size:14px;font-weight:700;line-height:1.4;">${incident.title}</div>` +
+        `<div style="font-size:12px;color:${COLORS.textDim};margin-top:5px;">${incident.region} | ${incident.source}</div>` +
+        `<div style="font-size:12px;color:${COLORS.textDim};margin-top:3px;">Confidence: ${incident.confidenceScore}/5 | ${incident.advice}</div>` +
+        verifyHtml +
+        deleteHtml +
+        `</div>`;
+
       const marker = new mapboxgl.Marker({
-        color: markerColorFromStatus(incident.status),
-        scale: 0.9,
+        color: markerColor(incident),
+        scale: 0.88,
       })
         .setLngLat([incident.coordinates.lng, incident.coordinates.lat])
-        .setPopup(
-          new mapboxgl.Popup({ offset: 18 }).setHTML(
-            `<div style="min-width:240px;padding:12px 14px;border-radius:10px;` +
-              `background:#0c1628;color:#f0f4f8;font-family:'Inter',sans-serif;line-height:1.5;` +
-              `border:1px solid rgba(148,163,184,0.12);">` +
-              `<div style="font-size:13px;font-weight:700;margin-bottom:5px;">${incident.title}</div>` +
-              `<div style="font-size:11px;color:#8a9bae;margin-bottom:3px;">${incident.region} · ${incident.source}</div>` +
-              `<div style="font-size:11px;color:#8a9bae;">Zekerheid: ${incident.confidenceScore}/5 · Advies: ${incident.advice}</div>` +
-              `</div>`,
-          ),
-        )
-        .addTo(mapRef.current);
+        .setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml))
+        .addTo(map);
+
       markersRef.current.push(marker);
     });
 
@@ -804,349 +645,230 @@ export default function AppWeb() {
       const coords = incidents
         .filter((i) => i?.coordinates?.lat && i?.coordinates?.lng)
         .map((i) => [i.coordinates.lng, i.coordinates.lat]);
+
       if (coords.length > 1) {
         const bounds = coords.reduce(
           (acc, [lng, lat]) => acc.extend([lng, lat]),
           new mapboxgl.LngLatBounds(coords[0], coords[0]),
         );
-        mapRef.current.fitBounds(bounds, {
-          padding: 70,
-          maxZoom: 6.2,
-          duration: 900,
-        });
+        map.fitBounds(bounds, { padding: 70, maxZoom: 6.2, duration: 850 });
       }
+
       hasFittedMapRef.current = true;
     }
   }, [incidents]);
 
-  // ── Demo update ──
-  async function triggerDemoUpdate() {
-    try {
-      const { payload } = await fetchFromApi("/api/demo/trigger-update", {
-        method: "POST",
-      });
-      if (payload?.incident) {
-        setIncidents((cur) => [payload.incident, ...cur]);
-        setApiStatus(payload?.cacheMeta?.mode || "demo-injected");
-      }
-    } catch {
-      setIncidents((cur) => [
-        {
-          id: `inc-demo-${Date.now()}`,
-          title: "Emergency update — New high risk alert",
-          region: "Kyiv",
-          coordinates: { lat: 50.3925, lng: 30.6812 },
-          source: "Air Alert Ukraine",
-          confidenceScore: 5,
-          validationStatus: "verified",
-          status: "high",
-          advice: "gevaar",
-          time: new Date().toISOString(),
-        },
-        ...cur,
-      ]);
-      setApiStatus("demo-local-fallback");
-    }
-  }
-
-  // ── Missing token screen ──
   if (!mapToken) {
     return (
-      <div
-        className="sz-page sz-page--center"
-        style={{ ...S.page, ...S.centerPage }}
-      >
-        <div style={S.errorCard}>
-          <div style={{ fontSize: 40, marginBottom: 14 }}>⚠️</div>
-          <h2
-            style={{
-              color: C.textPrimary,
-              fontFamily: C.font,
-              fontSize: 18,
-              fontWeight: 700,
-              marginBottom: 8,
-            }}
-          >
-            Mapbox token ontbreekt
-          </h2>
-          <p
-            style={{
-              color: C.textSecondary,
-              fontFamily: C.font,
-              fontSize: 13,
-              lineHeight: 1.65,
-            }}
-          >
-            Voeg{" "}
-            <code
-              style={{
-                background: C.bgElevated,
-                padding: "1px 6px",
-                borderRadius: 4,
-                color: C.accentBlue,
-              }}
-            >
-              EXPO_PUBLIC_MAPBOX_TOKEN
-            </code>{" "}
-            toe in{" "}
-            <code
-              style={{
-                background: C.bgElevated,
-                padding: "1px 6px",
-                borderRadius: 4,
-                color: C.accentBlue,
-              }}
-            >
-              frontend/.env
-            </code>
+      <div style={styles.centerPage}>
+        <div style={styles.errorCard}>
+          <h2 style={styles.errorTitle}>Mapbox token ontbreekt</h2>
+          <p style={styles.errorText}>
+            Zet EXPO_PUBLIC_MAPBOX_TOKEN in frontend/.env
           </p>
         </div>
       </div>
     );
   }
 
-  // ── Loading screen ──
-  if (!isLiveDataReady) {
+  if (!apiStatus.startsWith("live-")) {
     return (
-      <div
-        className="sz-page sz-page--center"
-        style={{ ...S.page, ...S.centerPage, gap: 0 }}
-      >
-        {/* Concentric spinning rings */}
-        <div
-          style={{
-            position: "relative",
-            width: 72,
-            height: 72,
-            marginBottom: 24,
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              borderRadius: "50%",
-              border: "2px solid rgba(239,68,68,0.18)",
-              borderTopColor: C.high,
-              animation: "sz-spin 1.0s linear infinite",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              inset: 10,
-              borderRadius: "50%",
-              border: "2px solid rgba(59,130,246,0.18)",
-              borderTopColor: C.accentBlue,
-              animation: "sz-spin 1.4s linear infinite reverse",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              inset: 20,
-              borderRadius: "50%",
-              border: "2px solid rgba(34,197,94,0.18)",
-              borderTopColor: C.low,
-              animation: "sz-spin 1.8s linear infinite",
-            }}
-          />
-        </div>
-        <h2
-          style={{
-            color: C.textPrimary,
-            fontFamily: C.font,
-            fontSize: 22,
-            fontWeight: 700,
-            marginBottom: 7,
-          }}
-        >
-          Safe Zone
-        </h2>
-        <p style={{ color: C.textSecondary, fontFamily: C.font, fontSize: 13 }}>
-          Live data ophalen van bronnen...
-        </p>
+      <div style={styles.centerPage}>
+        <div style={styles.loaderRing} />
+        <h2 style={styles.loadingTitle}>Safe Zone laadt...</h2>
+        <p style={styles.loadingText}>Wachten op live data van de bronnen</p>
       </div>
     );
   }
 
-  // ── Main app ──
   return (
-    <div className="sz-page" style={S.page}>
-      {/* ── Top Bar ── */}
-      <div className="sz-topbar" style={S.topBar}>
-        <div className="sz-topbar-left">
-          <h1 className="sz-title" style={S.title}>
-            Safe Zone
-          </h1>
-          <p className="sz-subtitle" style={S.subtitle}>
-            Live veiligheidsupdates voor burgers in conflictgebieden
-          </p>
+    <div style={styles.page}>
+      <div style={styles.headerRow}>
+        <div>
+          <h1 style={styles.title}>Safe Zone</h1>
+          <p style={styles.subtitle}>Live veiligheidsupdates op kaart</p>
         </div>
-        <div className="sz-topbar-right">
-          {isDemoMode && (
-            <button style={S.demoButton} onClick={triggerDemoUpdate}>
-              ⚡ Demo update
-            </button>
-          )}
-          <div style={S.liveBadge}>
-            <LivePulseDot />
-            <span
-              style={{
-                fontFamily: C.font,
-                fontSize: 11,
-                fontWeight: 700,
-                color: C.low,
-                letterSpacing: "0.6px",
-              }}
-            >
-              LIVE
-            </span>
-          </div>
-          <div style={S.countryBadge}>🇺🇦 Ukraine</div>
-        </div>
+        <div style={styles.statusBadge}>API: {apiStatus}</div>
       </div>
 
-      {/* ── Stats Row ── */}
-      <div className="sz-stats-row" style={S.statsRow}>
-        <StatPill count={highCount} label="Hoog risico" color={C.high} />
-        <StatPill count={mediumCount} label="Middel risico" color={C.medium} />
-        <StatPill count={lowCount} label="Laag / Veilig" color={C.low} />
-        <div
-          className="sz-stats-right"
-          style={{ display: "flex", alignItems: "center", gap: 6 }}
+      <div style={styles.zoneComposer}>
+        <button
+          style={{
+            ...styles.zoneBtn,
+            ...(selectedStatus === "high"
+              ? styles.zoneBtnHighActive
+              : styles.zoneBtnHigh),
+          }}
+          onClick={() => {
+            setSelectedStatus("high");
+            setSelectedReason("");
+            setPlacingMode(false);
+          }}
         >
-          <span
-            style={{ fontSize: 11, color: C.textMuted, fontFamily: C.font }}
-          >
-            API:
-          </span>
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: C.accentBlue,
-              fontFamily: C.font,
-              background: C.accentBlueDim,
-              padding: "3px 9px",
-              borderRadius: 99,
-              border: "1px solid rgba(59,130,246,0.18)",
-            }}
-          >
-            {apiStatus}
-          </span>
-          <span
-            style={{ fontSize: 11, color: C.textMuted, fontFamily: C.font }}
-          >
-            · {lastUpdatedStr}
-          </span>
-        </div>
+          Gevaar
+        </button>
+        <button
+          style={{
+            ...styles.zoneBtn,
+            ...(selectedStatus === "medium"
+              ? styles.zoneBtnMediumActive
+              : styles.zoneBtnMedium),
+          }}
+          onClick={() => {
+            setSelectedStatus("medium");
+            setSelectedReason("");
+            setPlacingMode(false);
+          }}
+        >
+          Let op
+        </button>
+        <button
+          style={{
+            ...styles.zoneBtn,
+            ...(selectedStatus === "low"
+              ? styles.zoneBtnLowActive
+              : styles.zoneBtnLow),
+          }}
+          onClick={() => {
+            setSelectedStatus("low");
+            setSelectedReason("");
+            setPlacingMode(false);
+          }}
+        >
+          Veilig
+        </button>
+
+        <select
+          value={selectedReason}
+          onChange={(e) => setSelectedReason(e.target.value)}
+          disabled={!selectedStatus}
+          style={{
+            ...styles.reasonSelect,
+            minWidth: isMobile ? "100%" : styles.reasonSelect.minWidth,
+          }}
+        >
+          <option value="">Kies reden...</option>
+          {reasonOptions.map((reason) => (
+            <option key={reason} value={reason}>
+              {reason}
+            </option>
+          ))}
+        </select>
+
+        <button
+          style={styles.placeBtn}
+          disabled={!selectedStatus || !selectedReason}
+          onClick={() => setPlacingMode((prev) => !prev)}
+        >
+          {placingMode ? "Plaatsing annuleren" : "Plaats op kaart"}
+        </button>
       </div>
 
-      {/* ── Map + Feed grid ── */}
-      <div className="sz-layout">
-        {/* Map */}
-        <div className="sz-map-card" style={S.mapCard}>
+      {placingMode ? (
+        <div style={styles.hintBar}>
+          Klik op de kaart om zone te plaatsen:{" "}
+          <strong>{selectedReason}</strong>
+        </div>
+      ) : null}
+
+      {zoneError ? <div style={styles.errorInline}>{zoneError}</div> : null}
+
+      <div
+        style={{
+          ...styles.layout,
+          gridTemplateColumns: isMobile
+            ? "1fr"
+            : styles.layout.gridTemplateColumns,
+        }}
+      >
+        <div
+          style={{
+            ...styles.mapCard,
+            minHeight: isMobile ? "44vh" : styles.mapCard.minHeight,
+          }}
+        >
           <div
             ref={mapContainerRef}
-            style={{ width: "100%", height: "100%" }}
+            style={{
+              ...styles.mapContainer,
+              height: isMobile ? "44vh" : styles.mapContainer.height,
+            }}
           />
         </div>
 
-        {/* Feed */}
-        <div className="sz-feed-card" style={S.feedCard}>
-          {/* Feed header */}
-          <div style={S.feedHeader}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: C.textPrimary,
-                  fontFamily: C.font,
-                  letterSpacing: "0.2px",
-                }}
-              >
-                Incident Feed
-              </h3>
-              <span
-                style={{
-                  fontSize: 11,
-                  color: C.textSecondary,
-                  fontFamily: C.font,
-                  fontWeight: 600,
-                  background: C.bgSurface,
-                  border: `1px solid ${C.borderSubtle}`,
-                  borderRadius: 99,
-                  padding: "1px 8px",
-                }}
-              >
-                {sortedIncidents.length}
-              </span>
-            </div>
+        <div
+          style={{
+            ...styles.feedCard,
+            minHeight: isMobile ? "42vh" : styles.feedCard.minHeight,
+            maxHeight: isMobile ? "52vh" : styles.feedCard.maxHeight,
+          }}
+        >
+          <div style={styles.feedHeader}>
+            Incident Feed ({sortedIncidents.length})
           </div>
-
-          {/* Scrollable list */}
-          <div className="sz-feed-list" style={S.feedList}>
-            <AnimatePresence mode="popLayout">
-              {sortedIncidents.length === 0 ? (
-                <motion.div
-                  key="empty"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  style={S.emptyState}
-                >
-                  <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
-                  <div
-                    style={{
-                      color: C.textSecondary,
-                      fontFamily: C.font,
-                      fontSize: 13,
-                    }}
-                  >
-                    Geen actieve meldingen
-                  </div>
-                </motion.div>
-              ) : (
-                sortedIncidents.map((incident) => (
-                  <IncidentCard key={incident.id} incident={incident} />
-                ))
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Legend */}
-          <div style={S.legend}>
-            {[
-              { color: C.high, label: "Onveilig" },
-              { color: C.medium, label: "Gemiddeld" },
-              { color: C.low, label: "Veilig" },
-            ].map(({ color, label }) => (
+          <div style={styles.feedList}>
+            {sortedIncidents.map((incident) => (
               <div
-                key={label}
-                style={{ display: "flex", alignItems: "center", gap: 5 }}
+                key={incident.id}
+                style={{
+                  ...styles.feedItem,
+                  borderLeftColor:
+                    incident.validationStatus === "unverified"
+                      ? COLORS.unverified
+                      : incident.status === "high"
+                        ? COLORS.high
+                        : incident.status === "medium"
+                          ? COLORS.medium
+                          : COLORS.low,
+                  ...(incident.validationStatus === "unverified"
+                    ? styles.feedItemUnverified
+                    : null),
+                }}
               >
-                <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: "50%",
-                    backgroundColor: color,
-                    display: "inline-block",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: C.textMuted,
-                    fontFamily: C.font,
-                  }}
-                >
-                  {label}
-                </span>
+                <div style={styles.feedItemTitle}>{incident.title}</div>
+                <div style={styles.feedMeta}>
+                  {incident.region} | {incident.source} |{" "}
+                  {formatRelativeTime(incident.time)}
+                </div>
+                <div style={styles.feedMeta}>
+                  {incident.validationStatus === "unverified"
+                    ? "Wacht op verificatie"
+                    : `Advice: ${incident.advice}`}
+                </div>
+                {incident.userCreated ? (
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={() => deleteZone(incident.id)}
+                  >
+                    Verwijder zone
+                  </button>
+                ) : null}
               </div>
             ))}
+          </div>
+
+          <div style={styles.feedLegend}>
+            <span style={styles.legendTitle}>Legenda:</span>
+            <span style={styles.legendItem}>
+              <span style={{ ...styles.legendDot, background: COLORS.high }} />{" "}
+              Onveilig
+            </span>
+            <span style={styles.legendItem}>
+              <span
+                style={{ ...styles.legendDot, background: COLORS.medium }}
+              />{" "}
+              Gemiddeld
+            </span>
+            <span style={styles.legendItem}>
+              <span style={{ ...styles.legendDot, background: COLORS.low }} />{" "}
+              Veilig
+            </span>
+            <span style={styles.legendItem}>
+              <span
+                style={{ ...styles.legendDot, background: COLORS.unverified }}
+              />{" "}
+              Wacht op verificatie
+            </span>
           </div>
         </div>
       </div>
@@ -1154,136 +876,314 @@ export default function AppWeb() {
   );
 }
 
-// ─── Stylesheet (visual tokens only — layout is in injected CSS classes) ────────
-const S = {
-  // Only keeps non-layout visual tokens; layout/sizing live in .sz-* CSS classes
+const styles = {
   page: {
-    width: "100%",
     minHeight: "100vh",
+    width: "100%",
+    background:
+      "radial-gradient(900px 420px at 15% -15%, rgba(29,78,216,0.18), transparent 70%), radial-gradient(900px 500px at 100% 0%, rgba(127,29,29,0.25), transparent 60%), #060a14",
+    color: COLORS.text,
+    padding: "20px 22px",
+    boxSizing: "border-box",
+    fontFamily: "'Manrope', system-ui, sans-serif",
+  },
+  centerPage: {
+    minHeight: "100vh",
+    width: "100%",
+    background: COLORS.page,
     display: "flex",
     flexDirection: "column",
-    background: [
-      "radial-gradient(ellipse 80% 50% at 15% -10%, rgba(29,78,216,0.18) 0%, transparent 60%)",
-      "radial-gradient(ellipse 65% 40% at 95% 5%, rgba(127,29,29,0.20) 0%, transparent 55%)",
-      C.bgBase,
-    ].join(", "),
-    color: C.textPrimary,
-    fontFamily: C.font,
-  },
-
-  centerPage: {
     alignItems: "center",
     justifyContent: "center",
+    color: COLORS.text,
+    fontFamily: "'Manrope', system-ui, sans-serif",
   },
-
-  topBar: {}, // layout handled by .sz-topbar
-  statsRow: {}, // layout handled by .sz-stats-row
-
-  title: {
-    color: C.textPrimary,
-    fontFamily: C.fontDisplay,
-    letterSpacing: "-0.8px",
-    textShadow: "0 1px 0 rgba(255,255,255,0.04)",
+  loaderRing: {
+    width: 66,
+    height: 66,
+    borderRadius: "50%",
+    border: "3px solid rgba(59,130,246,0.3)",
+    borderTopColor: COLORS.high,
+    animation: "sz-spin 0.9s linear infinite",
   },
-
-  subtitle: {
-    color: C.textSecondary,
-    fontFamily: C.font,
+  loadingTitle: { marginTop: 18, marginBottom: 6, fontSize: 24 },
+  loadingText: { margin: 0, color: COLORS.textDim },
+  errorCard: {
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    padding: "20px 22px",
+    textAlign: "center",
   },
-
-  liveBadge: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    background:
-      "linear-gradient(180deg, rgba(20,42,31,0.55), rgba(15,31,24,0.45))",
-    border: "1px solid rgba(34,197,94,0.22)",
-    borderRadius: 999,
-    padding: "6px 12px",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
-  },
-
-  countryBadge: {
-    background:
-      "linear-gradient(180deg, rgba(22,35,58,0.9), rgba(14,26,45,0.84))",
-    border: `1px solid ${C.borderSubtle}`,
-    borderRadius: 999,
-    padding: "6px 14px",
-    fontSize: 12,
-    fontWeight: 600,
-    color: C.textSecondary,
-    fontFamily: C.font,
-  },
-
-  demoButton: {
-    border: 0,
-    background: "linear-gradient(180deg, #ef4444, #dc2626)",
-    color: "#fff",
-    borderRadius: 8,
-    padding: "7px 14px",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-    fontFamily: C.font,
-    boxShadow: "0 6px 18px rgba(185,28,28,0.32)",
-  },
-
-  // layout/sizing for grid + cards handled by .sz-layout / .sz-map-card / .sz-feed-card CSS classes
-  mapCard: {
-    border: `1px solid rgba(148,163,184,0.15)`,
-    background:
-      "linear-gradient(180deg, rgba(13,22,38,0.9), rgba(8,15,28,0.94))",
-    boxShadow: "0 18px 46px rgba(0,0,0,0.42)",
-  },
-
-  feedCard: {
-    border: `1px solid rgba(148,163,184,0.15)`,
-    background:
-      "linear-gradient(180deg, rgba(12,21,37,0.94), rgba(8,15,28,0.96))",
-    boxShadow: "0 18px 46px rgba(0,0,0,0.4)",
-  },
-
-  feedHeader: {
-    padding: "11px 14px",
-    borderBottom: `1px solid ${C.borderSubtle}`,
+  errorTitle: { margin: 0, fontSize: 20 },
+  errorText: { marginTop: 8, color: COLORS.textDim },
+  headerRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    flexShrink: 0,
+    gap: 12,
+    marginBottom: 12,
   },
-
-  // layout for feedList handled by .sz-feed-list CSS class
-  feedList: {},
-
-  emptyState: {
+  title: { margin: 0, fontSize: 34, lineHeight: 1 },
+  subtitle: { margin: "6px 0 0", color: COLORS.textDim, fontSize: 13 },
+  statusBadge: {
+    border: `1px solid ${COLORS.border}`,
+    background: COLORS.feedCard,
+    borderRadius: 999,
+    padding: "8px 12px",
+    fontSize: 12,
+    color: COLORS.textDim,
+    whiteSpace: "nowrap",
+  },
+  zoneComposer: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 8,
+    alignItems: "center",
+  },
+  zoneBtn: {
+    border: "1px solid transparent",
+    borderRadius: 8,
+    padding: "8px 12px",
+    color: "#fff",
+    fontSize: 12,
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  zoneBtnHigh: {
+    background: "rgba(239,68,68,0.3)",
+    borderColor: "rgba(239,68,68,0.5)",
+  },
+  zoneBtnMedium: {
+    background: "rgba(245,158,11,0.25)",
+    borderColor: "rgba(245,158,11,0.45)",
+  },
+  zoneBtnLow: {
+    background: "rgba(34,197,94,0.22)",
+    borderColor: "rgba(34,197,94,0.45)",
+  },
+  zoneBtnHighActive: { background: COLORS.high, borderColor: COLORS.high },
+  zoneBtnMediumActive: {
+    background: COLORS.medium,
+    borderColor: COLORS.medium,
+  },
+  zoneBtnLowActive: { background: COLORS.low, borderColor: COLORS.low },
+  reasonSelect: {
+    border: `1px solid ${COLORS.border}`,
+    background: COLORS.feedCard,
+    color: COLORS.text,
+    borderRadius: 8,
+    padding: "8px 10px",
+    minWidth: 250,
+  },
+  placeBtn: {
+    border: "none",
+    background: "linear-gradient(180deg,#3b82f6,#2563eb)",
+    color: "white",
+    borderRadius: 8,
+    padding: "8px 12px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  hintBar: {
+    background: "rgba(59,130,246,0.14)",
+    border: "1px solid rgba(59,130,246,0.3)",
+    color: "#bfdbfe",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  errorInline: {
+    marginBottom: 10,
+    border: "1px solid rgba(239,68,68,0.45)",
+    background: "rgba(127,29,29,0.35)",
+    color: "#fecaca",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 12,
+  },
+  layout: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12 },
+  mapCard: {
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    overflow: "hidden",
+    background: COLORS.mapCard,
+    minHeight: "72vh",
+    boxShadow: "0 12px 36px rgba(2,6,20,0.4)",
+  },
+  mapContainer: { width: "100%", height: "72vh" },
+  feedCard: {
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    background: COLORS.feedCard,
+    minHeight: "72vh",
+    maxHeight: "72vh",
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 36,
-    background: C.bgCard,
-    border: `1px dashed ${C.borderSubtle}`,
-    borderRadius: 8,
+    boxShadow: "0 12px 36px rgba(2,6,20,0.38)",
   },
-
-  legend: {
-    padding: "9px 14px",
-    borderTop: `1px solid ${C.borderSubtle}`,
+  feedHeader: {
+    padding: "12px 14px",
+    borderBottom: `1px solid ${COLORS.border}`,
+    fontSize: 14,
+    fontWeight: 700,
+  },
+  feedList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: 10,
     display: "flex",
-    gap: 16,
-    alignItems: "center",
-    flexShrink: 0,
-    background:
-      "linear-gradient(180deg, rgba(9,16,29,0.98), rgba(7,12,22,0.98))",
-    borderRadius: "0 0 12px 12px",
+    flexDirection: "column",
+    gap: 8,
   },
+  feedItem: {
+    background: "rgba(15,23,42,0.82)",
+    border: `1px solid ${COLORS.border}`,
+    borderLeft: "3px solid",
+    borderRadius: 8,
+    padding: "10px 10px 9px",
+  },
+  feedItemUnverified: {
+    background: "rgba(51,65,85,0.23)",
+    borderStyle: "dashed",
+  },
+  feedItemTitle: { fontSize: 13, fontWeight: 700, marginBottom: 5 },
+  feedMeta: { color: COLORS.textDim, fontSize: 11, marginTop: 3 },
+  deleteBtn: {
+    marginTop: 7,
+    border: "none",
+    background: COLORS.high,
+    color: "white",
+    borderRadius: 6,
+    padding: "6px 9px",
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  feedLegend: {
+    borderTop: `1px solid ${COLORS.border}`,
+    background: "#0b1220",
+    padding: "10px 12px",
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  legendTitle: {
+    color: COLORS.textDim,
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "uppercase",
+  },
+  legendItem: {
+    color: COLORS.textDim,
+    fontSize: 11,
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    display: "inline-block",
+  },
+};
 
-  errorCard: {
-    background: C.bgElevated,
-    border: "1px solid rgba(239,68,68,0.22)",
+const adminStyles = {
+  page: {
+    minHeight: "100vh",
+    background: COLORS.page,
+    color: COLORS.text,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    padding: 20,
+    boxSizing: "border-box",
+  },
+  card: {
+    maxWidth: 500,
+    margin: "80px auto 0",
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
     borderRadius: 12,
-    padding: "28px 32px",
-    maxWidth: 480,
-    textAlign: "center",
+    padding: 20,
+  },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  title: { margin: 0, fontSize: 28 },
+  subtitle: { marginTop: 8, color: COLORS.textDim, fontSize: 13 },
+  form: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 },
+  input: {
+    border: `1px solid ${COLORS.border}`,
+    background: COLORS.mapCard,
+    color: COLORS.text,
+    borderRadius: 8,
+    padding: "9px 10px",
+  },
+  primaryBtn: {
+    border: "none",
+    background: "linear-gradient(180deg,#3b82f6,#1d4ed8)",
+    color: "white",
+    borderRadius: 8,
+    padding: "9px 10px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  ghostBtn: {
+    border: `1px solid ${COLORS.border}`,
+    background: COLORS.mapCard,
+    color: COLORS.textDim,
+    borderRadius: 8,
+    padding: "8px 10px",
+    cursor: "pointer",
+  },
+  loading: { color: COLORS.textDim, marginBottom: 10 },
+  error: {
+    marginTop: 10,
+    border: "1px solid rgba(239,68,68,0.45)",
+    background: "rgba(127,29,29,0.35)",
+    color: "#fecaca",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 12,
+  },
+  list: { display: "flex", flexDirection: "column", gap: 10 },
+  empty: {
+    border: `1px dashed ${COLORS.border}`,
+    borderRadius: 10,
+    padding: 14,
+    color: COLORS.textDim,
+  },
+  item: {
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 10,
+    background: COLORS.feedCard,
+    padding: 12,
+  },
+  itemTitle: { fontSize: 14, fontWeight: 700, marginBottom: 5 },
+  itemMeta: { color: COLORS.textDim, fontSize: 12, marginBottom: 3 },
+  actions: { display: "flex", gap: 8, marginTop: 8 },
+  acceptBtn: {
+    border: "none",
+    background: COLORS.low,
+    color: "#06230f",
+    borderRadius: 7,
+    padding: "7px 10px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  rejectBtn: {
+    border: "none",
+    background: COLORS.high,
+    color: "#fff",
+    borderRadius: 7,
+    padding: "7px 10px",
+    fontWeight: 700,
+    cursor: "pointer",
   },
 };
