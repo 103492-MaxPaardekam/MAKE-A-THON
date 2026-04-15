@@ -10,6 +10,7 @@ const incidentsSeed = [
     coordinates: { lat: 50.4501, lng: 30.5234 },
     source: "Air Alert Ukraine",
     confidenceScore: 5,
+    validationStatus: "verified",
     status: "high",
     advice: "gevaar",
     time: "Now",
@@ -21,6 +22,7 @@ const incidentsSeed = [
     coordinates: { lat: 50.4256, lng: 30.6432 },
     source: "State Emergency Service",
     confidenceScore: 4,
+    validationStatus: "verified",
     status: "medium",
     advice: "let op",
     time: "12 min ago",
@@ -32,11 +34,17 @@ const incidentsSeed = [
     coordinates: { lat: 50.4012, lng: 30.5498 },
     source: "ReliefWeb",
     confidenceScore: 4,
+    validationStatus: "verified",
     status: "low",
     advice: "veilig",
     time: "23 min ago",
   },
 ];
+
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  process.env.REACT_APP_API_BASE_URL ||
+  "http://localhost:3001";
 
 function scoreColor(score) {
   if (score >= 5) return "#ef4444";
@@ -57,6 +65,7 @@ export default function AppWeb() {
   const mapRef = useRef(null);
   const markersRef = useRef([]);
   const [incidents, setIncidents] = useState(incidentsSeed);
+  const [apiStatus, setApiStatus] = useState("loading");
 
   const isDemoMode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -67,6 +76,28 @@ export default function AppWeb() {
     process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
     process.env.REACT_APP_MAPBOX_TOKEN ||
     "";
+
+  useEffect(() => {
+    async function loadIncidents() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/incidents`);
+        if (!response.ok) throw new Error(`API ${response.status}`);
+        const payload = await response.json();
+        if (Array.isArray(payload?.incidents) && payload.incidents.length > 0) {
+          setIncidents(payload.incidents);
+          setApiStatus(payload?.cacheMeta?.mode || "live");
+          return;
+        }
+        setApiStatus("fallback-mock");
+      } catch (error) {
+        setApiStatus("fallback-mock");
+      }
+    }
+
+    loadIncidents();
+    const timer = setInterval(loadIncidents, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current || !mapToken) return;
@@ -126,21 +157,36 @@ export default function AppWeb() {
     });
   }, [incidents]);
 
-  function triggerDemoUpdate() {
-    setIncidents((current) => {
-      const next = {
-        id: `inc-demo-${Date.now()}`,
-        title: "Emergency update - New high risk alert",
-        region: "Kyiv",
-        coordinates: { lat: 50.3925, lng: 30.6812 },
-        source: "Air Alert Ukraine",
-        confidenceScore: 5,
-        status: "high",
-        advice: "gevaar",
-        time: "Now",
-      };
-      return [next, ...current];
-    });
+  async function triggerDemoUpdate() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/demo/trigger-update`, {
+        method: "POST",
+      });
+
+      if (!response.ok) throw new Error(`Demo API ${response.status}`);
+      const payload = await response.json();
+      if (payload?.incident) {
+        setIncidents((current) => [payload.incident, ...current]);
+        setApiStatus(payload?.cacheMeta?.mode || "demo-injected");
+      }
+    } catch (error) {
+      setIncidents((current) => {
+        const next = {
+          id: `inc-demo-${Date.now()}`,
+          title: "Emergency update - New high risk alert",
+          region: "Kyiv",
+          coordinates: { lat: 50.3925, lng: 30.6812 },
+          source: "Air Alert Ukraine",
+          confidenceScore: 5,
+          validationStatus: "verified",
+          status: "high",
+          advice: "gevaar",
+          time: "Now",
+        };
+        return [next, ...current];
+      });
+      setApiStatus("demo-local-fallback");
+    }
   }
 
   if (!mapToken) {
@@ -169,6 +215,8 @@ export default function AppWeb() {
         </div>
         <div style={styles.badge}>Kyiv | Web Demo</div>
       </div>
+
+      <div style={styles.apiStatus}>API status: {apiStatus}</div>
 
       <div style={styles.layout}>
         <div style={styles.mapCard}>
@@ -251,6 +299,14 @@ const styles = {
     padding: "8px 14px",
     fontSize: "12px",
     fontWeight: 700,
+  },
+  apiStatus: {
+    marginBottom: "10px",
+    color: "#93c5fd",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.4px",
+    textTransform: "uppercase",
   },
   layout: {
     display: "grid",
