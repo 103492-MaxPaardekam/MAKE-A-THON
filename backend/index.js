@@ -2,7 +2,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import axios from "axios";
+import mongoose from "mongoose";
 import { mockIncidents, mockDemoUpdate } from "../shared/mockIncidents.js";
+import Incident from "./models/Incident.js";
 
 dotenv.config();
 
@@ -13,9 +15,27 @@ app.use(express.json());
 const PORT = Number(process.env.PORT || 3001);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30000);
 const ENABLE_DEMO_MODE = process.env.ENABLE_DEMO_MODE !== "false";
+const MONGODB_URI =
+  process.env.MONGODB_URI || "mongodb://localhost:27017/safe-zone";
 
 const AIR_ALERT_PRIMARY_URL = process.env.AIR_ALERT_PRIMARY_URL || "";
 const AIR_ALERT_FALLBACK_URL = process.env.AIR_ALERT_FALLBACK_URL || "";
+
+// Initialize MongoDB connection
+async function initMongoDB() {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("✓ MongoDB connected:", MONGODB_URI);
+    return true;
+  } catch (error) {
+    console.error("✗ MongoDB connection failed:", error?.message || error);
+    console.log("⚠ Falling back to in-memory cache (incidents won't persist)");
+    return false;
+  }
+}
 
 let incidentCache = withIds(mockIncidents);
 let cacheMeta = {
@@ -132,6 +152,13 @@ async function refreshIncidents() {
 
     if (primaryIncidents.length > 0) {
       incidentCache = withIds(primaryIncidents);
+
+      // Save to MongoDB if connected
+      if (mongoose.connection.readyState === 1) {
+        await Incident.deleteMany({});
+        await Incident.insertMany(primaryIncidents);
+      }
+
       cacheMeta = {
         ...cacheMeta,
         mode: "live-primary",
@@ -148,6 +175,13 @@ async function refreshIncidents() {
 
     if (fallbackIncidents.length > 0) {
       incidentCache = withIds(fallbackIncidents);
+
+      // Save to MongoDB if connected
+      if (mongoose.connection.readyState === 1) {
+        await Incident.deleteMany({});
+        await Incident.insertMany(fallbackIncidents);
+      }
+
       cacheMeta = {
         ...cacheMeta,
         mode: "live-fallback",
@@ -174,14 +208,13 @@ async function refreshIncidents() {
   }
 }
 
-await refreshIncidents();
-setInterval(refreshIncidents, REFRESH_INTERVAL_MS);
 
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     service: "safe-zone-api",
     uptimeSeconds: Math.round(process.uptime()),
+    mongodbConnected: mongoose.connection.readyState === 1,
     cacheMeta,
   });
 });
@@ -222,6 +255,23 @@ app.post("/api/demo/trigger-update", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Safe Zone API listening on http://localhost:${PORT}`);
+// Start server
+async function start() {
+  const mongoConnected = await initMongoDB();
+
+  app.listen(PORT, () => {
+    console.log(`\n✓ Safe Zone API listening on http://localhost:${PORT}`);
+    if (mongoConnected) {
+      console.log("✓ Database: MongoDB (persistent)");
+    } else {
+      console.log("⚠ Database: In-memory cache (will reset on restart)");
+    }
+    console.log(`ℹ Demo mode: ${ENABLE_DEMO_MODE ? "enabled" : "disabled"}`);
+    console.log(`ℹ Health check: GET http://localhost:${PORT}/api/health\n`);
+  });
+}
+
+start().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
 });
