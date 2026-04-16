@@ -262,26 +262,176 @@ function buildBasicAuth(username, password) {
   return `Basic ${btoa(`${username}:${password}`)}`;
 }
 
+function ConfidenceBar({ score }) {
+  const max = 5;
+  const color =
+    score >= 4 ? COLORS.low : score >= 3 ? COLORS.medium : COLORS.high;
+  return (
+    <div style={adminStyles.confRow}>
+      <span style={adminStyles.confLabel}>Confidence</span>
+      <div style={adminStyles.confTrack}>
+        {Array.from({ length: max }, (_, i) => (
+          <div
+            key={i}
+            style={{
+              ...adminStyles.confDot,
+              background: i < score ? color : "rgba(255,255,255,0.1)",
+            }}
+          />
+        ))}
+      </div>
+      <span style={{ ...adminStyles.confLabel, color }}>{score}/{max}</span>
+    </div>
+  );
+}
+
+function ZoneCard({ zone, mode, onVerify, onReject, onDelete, onViewMap }) {
+  const statusColor =
+    zone.status === "high"
+      ? COLORS.high
+      : zone.status === "medium"
+        ? COLORS.medium
+        : COLORS.low;
+  const statusLabel =
+    zone.status === "high"
+      ? "High"
+      : zone.status === "medium"
+        ? "Medium"
+        : "Low";
+
+  return (
+    <div style={adminStyles.zoneCard}>
+      <div style={adminStyles.zoneCardTop}>
+        <span
+          style={{
+            ...adminStyles.statusPill,
+            background: `${statusColor}22`,
+            color: statusColor,
+            border: `1px solid ${statusColor}44`,
+          }}
+        >
+          {statusLabel}
+        </span>
+        <span style={adminStyles.zoneTime}>{formatRelativeTime(zone.time)}</span>
+      </div>
+      <div style={adminStyles.zoneTitle}>{zone.title}</div>
+      <div style={adminStyles.zoneMeta}>
+        <span>📍 {zone.region}</span>
+        {zone.reason ? <span>· {zone.reason}</span> : null}
+      </div>
+      {zone.confidenceScore != null ? (
+        <ConfidenceBar score={zone.confidenceScore} />
+      ) : null}
+      <div style={adminStyles.zoneCoords}>
+        <span>
+          {zone.coordinates?.lat?.toFixed?.(5)},{" "}
+          {zone.coordinates?.lng?.toFixed?.(5)}
+        </span>
+        <button style={adminStyles.viewMapBtn} onClick={onViewMap}>
+          View on map
+        </button>
+      </div>
+      <div style={adminStyles.zoneActions}>
+        {mode === "pending" ? (
+          <>
+            <button style={adminStyles.acceptBtn} onClick={onVerify}>
+              Verify
+            </button>
+            <button style={adminStyles.rejectBtn} onClick={onReject}>
+              Reject
+            </button>
+          </>
+        ) : (
+          <button style={adminStyles.deleteBtn} onClick={onDelete}>
+            Delete
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdminPage() {
+  const mapToken =
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
+    process.env.REACT_APP_MAPBOX_TOKEN ||
+    "";
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [authHeader, setAuthHeader] = useState("");
-  const [zones, setZones] = useState([]);
+  const [pendingZones, setPendingZones] = useState([]);
+  const [verifiedZones, setVerifiedZones] = useState([]);
+  const [totalIncidents, setTotalIncidents] = useState(null);
+  const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("pending");
+  const [mapModal, setMapModal] = useState(null);
+  const [confirm, setConfirm] = useState(null); // { message, onConfirm }
+  const [toasts, setToasts] = useState([]); // [{ id, message, type }]
+  const mapModalRef = useRef(null);
+  const mapModalInstanceRef = useRef(null);
+
+  // Override Expo's overflow:hidden so the admin page can scroll normally
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "auto";
+    document.body.style.height = "auto";
+    const root = document.getElementById("root");
+    if (root) {
+      root._adminPrevHeight = root.style.height;
+      root.style.height = "auto";
+    }
+    return () => {
+      document.body.style.overflow = prev || "";
+      document.body.style.height = "";
+      if (root) root.style.height = root._adminPrevHeight || "";
+    };
+  }, []);
+
+  const addToast = useCallback((message, type = "success") => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3500);
+  }, []);
+
+  const loadHealth = useCallback(async () => {
+    try {
+      const data = await fetchFromApi("/api/health");
+      setHealth(data);
+    } catch { }
+  }, []);
+
+  const loadVerifiedZones = useCallback(async () => {
+    try {
+      const payload = await fetchFromApi("/api/incidents");
+      const all = payload?.incidents || [];
+      setTotalIncidents(all.length);
+      setVerifiedZones(
+        all.filter((i) => i.userCreated && i.validationStatus === "verified"),
+      );
+    } catch { }
+  }, []);
 
   const loadPendingZones = useCallback(
-    async (header = authHeader) => {
-      if (!header) return;
+    async (header) => {
+      const auth = header ?? authHeader;
+      if (!auth) return;
       setLoading(true);
       setError("");
       try {
         const payload = await fetchFromApi("/api/zones/unverified", {
-          headers: { Authorization: header },
+          headers: { Authorization: auth },
         });
-        setZones(payload?.zones || []);
+        const sorted = (payload?.zones || []).sort(
+          (a, b) => Date.parse(b.time) - Date.parse(a.time),
+        );
+        setPendingZones(sorted);
       } catch (e) {
-        setError(e?.message || "Kon zones niet laden");
+        setError(e?.message || "Could not load pending zones");
       } finally {
         setLoading(false);
       }
@@ -289,126 +439,440 @@ function AdminPage() {
     [authHeader],
   );
 
+  const handleRefresh = useCallback(
+    async (header) => {
+      await Promise.all([
+        loadPendingZones(header),
+        loadVerifiedZones(),
+        loadHealth(),
+      ]);
+    },
+    [loadPendingZones, loadVerifiedZones, loadHealth],
+  );
+
+  // Initial load
   useEffect(() => {
+    loadHealth();
     const stored = localStorage.getItem("safezone-admin-auth") || "";
     if (stored) {
       setAuthHeader(stored);
       loadPendingZones(stored);
+      loadVerifiedZones();
     }
-  }, [loadPendingZones]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!authHeader) return;
+    const interval = setInterval(() => handleRefresh(), 30000);
+    return () => clearInterval(interval);
+  }, [authHeader, handleRefresh]);
+
+  // Map modal Mapbox instance
+  useEffect(() => {
+    if (!mapModal || !mapModalRef.current || !mapToken) return;
+    const timeout = setTimeout(() => {
+      if (!mapModalRef.current) return;
+      mapboxgl.accessToken = mapToken;
+      mapModalInstanceRef.current = new mapboxgl.Map({
+        container: mapModalRef.current,
+        style: "mapbox://styles/mapbox/dark-v11",
+        center: [mapModal.coordinates.lng, mapModal.coordinates.lat],
+        zoom: 8,
+        attributionControl: false,
+      });
+      new mapboxgl.Marker({ color: markerColor(mapModal) })
+        .setLngLat([mapModal.coordinates.lng, mapModal.coordinates.lat])
+        .addTo(mapModalInstanceRef.current);
+    }, 50);
+    return () => {
+      clearTimeout(timeout);
+      if (mapModalInstanceRef.current) {
+        mapModalInstanceRef.current.remove();
+        mapModalInstanceRef.current = null;
+      }
+    };
+  }, [mapModal, mapToken]);
 
   async function handleLogin(e) {
     e.preventDefault();
     const header = buildBasicAuth(username, password);
     localStorage.setItem("safezone-admin-auth", header);
     setAuthHeader(header);
-    await loadPendingZones(header);
+    setError("");
+    await handleRefresh(header);
   }
 
   async function verifyZone(zoneId) {
-    await fetchFromApi(`/api/zones/${zoneId}/verify`, {
-      method: "PATCH",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-      },
-    });
-    await loadPendingZones();
+    try {
+      await fetchFromApi(`/api/zones/${zoneId}/verify`, {
+        method: "PATCH",
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+        },
+      });
+      addToast("Zone verified and published to the map", "success");
+      await handleRefresh();
+    } catch (e) {
+      addToast(e?.message || "Could not verify zone", "error");
+    }
   }
 
   async function rejectZone(zoneId) {
-    await fetchFromApi(`/api/zones/${zoneId}`, {
-      method: "DELETE",
-      headers: { Authorization: authHeader },
-    });
-    await loadPendingZones();
+    try {
+      await fetchFromApi(`/api/zones/${zoneId}`, {
+        method: "DELETE",
+        headers: { Authorization: authHeader },
+      });
+      addToast("Zone rejected and removed from the map", "success");
+      await handleRefresh();
+    } catch (e) {
+      addToast(e?.message || "Could not reject zone", "error");
+    }
+  }
+
+  async function deleteVerifiedZone(zoneId) {
+    try {
+      await fetchFromApi(`/api/zones/${zoneId}`, {
+        method: "DELETE",
+        headers: { Authorization: authHeader },
+      });
+      addToast("Zone deleted from the map", "success");
+      await handleRefresh();
+    } catch (e) {
+      addToast(e?.message || "Could not delete zone", "error");
+    }
+  }
+
+  function askConfirm(message, onConfirm) {
+    setConfirm({ message, onConfirm });
   }
 
   if (!authHeader) {
     return (
-      <div style={adminStyles.page}>
-        <div style={adminStyles.card}>
-          <h1 style={adminStyles.title}>Safe Zone Admin</h1>
-          <p style={adminStyles.subtitle}>Inloggen om zones te modereren</p>
+      <div style={adminStyles.loginPage}>
+        <div style={adminStyles.loginCard}>
+          <div style={adminStyles.loginLogo}>🛡</div>
+          <h1 style={adminStyles.loginTitle}>Safe Zone Admin</h1>
+          <p style={adminStyles.loginSub}>Sign in to moderate zones</p>
           <form onSubmit={handleLogin} style={adminStyles.form}>
-            <input
-              style={adminStyles.input}
-              placeholder="Gebruikersnaam"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-            <input
-              style={adminStyles.input}
-              type="password"
-              placeholder="Wachtwoord"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div>
+              <label style={adminStyles.label}>Username</label>
+              <input
+                style={adminStyles.input}
+                placeholder="admin"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                required
+              />
+            </div>
+            <div>
+              <label style={adminStyles.label}>Password</label>
+              <input
+                style={adminStyles.input}
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </div>
             <button style={adminStyles.primaryBtn} type="submit">
-              Inloggen
+              Sign in
             </button>
           </form>
-          {error ? <div style={adminStyles.error}>{error}</div> : null}
+          {error ? <div style={adminStyles.errorBox}>{error}</div> : null}
         </div>
       </div>
     );
   }
 
+  const uptime = health?.uptimeSeconds;
+  const uptimeStr =
+    uptime == null
+      ? "—"
+      : uptime < 60
+        ? `${uptime}s`
+        : uptime < 3600
+          ? `${Math.floor(uptime / 60)}m`
+          : `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
+
+  const isLiveMode = health?.cacheMeta?.mode?.startsWith("live");
+
   return (
     <div style={adminStyles.page}>
-      <div style={adminStyles.headerRow}>
-        <h1 style={adminStyles.title}>Ongeverifieerde zones</h1>
-        <button
-          style={adminStyles.ghostBtn}
-          onClick={() => {
-            localStorage.removeItem("safezone-admin-auth");
-            setAuthHeader("");
-            setZones([]);
+      {/* Toast stack */}
+      <div style={adminStyles.toastStack}>
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            style={{
+              ...adminStyles.toast,
+              ...(t.type === "error" ? adminStyles.toastError : adminStyles.toastSuccess),
+            }}
+          >
+            {t.type === "success" ? "✓" : "✕"} {t.message}
+          </div>
+        ))}
+      </div>
+
+      {/* Confirm dialog */}
+      {confirm ? (
+        <div
+          style={adminStyles.modalOverlay}
+          onClick={() => setConfirm(null)}
+        >
+          <div
+            style={adminStyles.confirmBox}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={adminStyles.confirmMsg}>{confirm.message}</div>
+            <div style={adminStyles.confirmActions}>
+              <button
+                style={adminStyles.ghostBtn}
+                onClick={() => setConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                style={adminStyles.rejectBtn}
+                onClick={() => {
+                  confirm.onConfirm();
+                  setConfirm(null);
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Map modal */}
+      {mapModal ? (
+        <div
+          style={adminStyles.modalOverlay}
+          onClick={() => setMapModal(null)}
+        >
+          <div
+            style={adminStyles.modalBox}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={adminStyles.modalHeader}>
+              <div>
+                <div style={adminStyles.modalTitle}>{mapModal.title}</div>
+                <div style={adminStyles.modalSub}>
+                  {mapModal.coordinates?.lat?.toFixed?.(5)},{" "}
+                  {mapModal.coordinates?.lng?.toFixed?.(5)}
+                </div>
+              </div>
+              <button
+                style={adminStyles.modalClose}
+                onClick={() => setMapModal(null)}
+              >
+                ✕
+              </button>
+            </div>
+            {mapToken ? (
+              <div ref={mapModalRef} style={adminStyles.modalMap} />
+            ) : (
+              <div style={adminStyles.modalNoMap}>
+                No Mapbox token — see coordinates above
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Page header */}
+      <div style={adminStyles.pageHeader}>
+        <div>
+          <h1 style={adminStyles.pageTitle}>Safe Zone Admin</h1>
+          <p style={adminStyles.pageSub}>
+            Zone moderation dashboard · auto-refreshes every 30s
+          </p>
+        </div>
+        <div style={adminStyles.headerActions}>
+          <button
+            style={adminStyles.refreshBtn}
+            onClick={() => handleRefresh()}
+            disabled={loading}
+          >
+            {loading ? "..." : "↻ Refresh"}
+          </button>
+          <button
+            style={adminStyles.ghostBtn}
+            onClick={() => {
+              localStorage.removeItem("safezone-admin-auth");
+              setAuthHeader("");
+              setPendingZones([]);
+              setVerifiedZones([]);
+              setHealth(null);
+              setTotalIncidents(null);
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div style={adminStyles.statsRow}>
+        <div style={adminStyles.statCard}>
+          <div style={adminStyles.statValue}>{pendingZones.length}</div>
+          <div style={adminStyles.statLabel}>Pending Review</div>
+        </div>
+        <div style={adminStyles.statCard}>
+          <div style={adminStyles.statValue}>{verifiedZones.length}</div>
+          <div style={adminStyles.statLabel}>Verified Zones</div>
+        </div>
+        <div style={adminStyles.statCard}>
+          <div style={adminStyles.statValue}>
+            {totalIncidents != null ? totalIncidents : "—"}
+          </div>
+          <div style={adminStyles.statLabel}>Total on Map</div>
+        </div>
+        <div
+          style={{
+            ...adminStyles.statCard,
+            ...(isLiveMode ? adminStyles.statLive : adminStyles.statMock),
           }}
         >
-          Uitloggen
+          <div style={adminStyles.statValue}>
+            {isLiveMode ? "Live" : health ? "Mock" : "—"}
+          </div>
+          <div style={adminStyles.statLabel}>API Mode</div>
+        </div>
+        <div style={adminStyles.statCard}>
+          <div style={adminStyles.statValue}>{uptimeStr}</div>
+          <div style={adminStyles.statLabel}>Uptime</div>
+        </div>
+      </div>
+
+      {/* Health bar */}
+      {health ? (
+        <div style={adminStyles.healthBar}>
+          <span style={adminStyles.healthItem}>
+            <span
+              style={{
+                ...adminStyles.healthDot,
+                background: health.mongodbConnected ? COLORS.low : COLORS.high,
+              }}
+            />
+            MongoDB:{" "}
+            {health.mongodbConnected ? "Connected" : "Offline (in-memory)"}
+          </span>
+          <span style={adminStyles.healthItem}>
+            Source:{" "}
+            <strong style={{ color: COLORS.text }}>
+              {health.cacheMeta?.activeSource || "—"}
+            </strong>
+          </span>
+          <span style={adminStyles.healthItem}>
+            Updated:{" "}
+            <strong style={{ color: COLORS.text }}>
+              {health.cacheMeta?.lastUpdated
+                ? formatRelativeTime(health.cacheMeta.lastUpdated)
+                : "—"}
+            </strong>
+          </span>
+          {health.cacheMeta?.lastError ? (
+            <span style={{ ...adminStyles.healthItem, color: "#fca5a5" }}>
+              Error: {health.cacheMeta.lastError}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {error ? <div style={adminStyles.errorBox}>{error}</div> : null}
+
+      {/* Tabs */}
+      <div style={adminStyles.tabs}>
+        <button
+          style={{
+            ...adminStyles.tab,
+            ...(activeTab === "pending" ? adminStyles.tabActive : {}),
+          }}
+          onClick={() => setActiveTab("pending")}
+        >
+          Pending
+          {pendingZones.length > 0 ? (
+            <span style={adminStyles.tabBadge}>{pendingZones.length}</span>
+          ) : null}
+        </button>
+        <button
+          style={{
+            ...adminStyles.tab,
+            ...(activeTab === "verified" ? adminStyles.tabActive : {}),
+          }}
+          onClick={() => setActiveTab("verified")}
+        >
+          Verified Zones
+          {verifiedZones.length > 0 ? (
+            <span style={adminStyles.tabBadge}>{verifiedZones.length}</span>
+          ) : null}
         </button>
       </div>
 
-      {loading ? <div style={adminStyles.loading}>Laden...</div> : null}
-      {error ? <div style={adminStyles.error}>{error}</div> : null}
+      {loading ? (
+        <div style={adminStyles.loadingMsg}>Loading zones...</div>
+      ) : null}
 
-      <div style={adminStyles.list}>
-        {zones.length === 0 ? (
-          <div style={adminStyles.empty}>Geen ongeverifieerde zones</div>
-        ) : (
-          zones.map((zone) => (
-            <div key={zone.id} style={adminStyles.item}>
-              <div style={adminStyles.itemTitle}>{zone.title}</div>
-              <div style={adminStyles.itemMeta}>
-                {zone.region} | {formatRelativeTime(zone.time)}
-              </div>
-              <div style={adminStyles.itemMeta}>
-                Reden: {zone.reason || "-"}
-              </div>
-              <div style={adminStyles.itemMeta}>
-                Locatie: {zone.coordinates?.lat?.toFixed?.(4)},{" "}
-                {zone.coordinates?.lng?.toFixed?.(4)}
-              </div>
-              <div style={adminStyles.actions}>
-                <button
-                  style={adminStyles.acceptBtn}
-                  onClick={() => verifyZone(zone.id)}
-                >
-                  Accepteren
-                </button>
-                <button
-                  style={adminStyles.rejectBtn}
-                  onClick={() => rejectZone(zone.id)}
-                >
-                  Afwijzen
-                </button>
-              </div>
+      {/* Zone grid */}
+      <div style={adminStyles.zoneGrid}>
+        {activeTab === "pending" &&
+          (pendingZones.length === 0 && !loading ? (
+            <div style={adminStyles.emptyState}>
+              <div style={adminStyles.emptyIcon}>✓</div>
+              <div>No pending zones to review</div>
             </div>
-          ))
-        )}
+          ) : (
+            pendingZones.map((zone) => (
+              <ZoneCard
+                key={zone.id}
+                zone={zone}
+                mode="pending"
+                onVerify={() =>
+                  askConfirm(
+                    `Verify "${zone.title}"? It will go live on the map.`,
+                    () => verifyZone(zone.id),
+                  )
+                }
+                onReject={() =>
+                  askConfirm(
+                    `Reject "${zone.title}"? It will be removed from the map.`,
+                    () => rejectZone(zone.id),
+                  )
+                }
+                onViewMap={() => setMapModal(zone)}
+              />
+            ))
+          ))}
+        {activeTab === "verified" &&
+          (verifiedZones.length === 0 && !loading ? (
+            <div style={adminStyles.emptyState}>
+              <div style={adminStyles.emptyIcon}>○</div>
+              <div>No verified user zones on record</div>
+            </div>
+          ) : (
+            verifiedZones.map((zone) => (
+              <ZoneCard
+                key={zone.id}
+                zone={zone}
+                mode="verified"
+                onDelete={() =>
+                  askConfirm(
+                    `Delete "${zone.title}"? It will be removed from the map.`,
+                    () => deleteVerifiedZone(zone.id),
+                  )
+                }
+                onViewMap={() => setMapModal(zone)}
+              />
+            ))
+          ))}
       </div>
     </div>
   );
@@ -488,6 +952,7 @@ export default function AppWeb() {
       .mapboxgl-popup-content { background: transparent !important; box-shadow: none !important; padding: 0 !important; }
       .mapboxgl-popup-tip { border-top-color: ${COLORS.feedCard} !important; }
       @keyframes sz-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      @keyframes sz-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     `;
     document.head.appendChild(styleEl);
     return () => {
@@ -538,23 +1003,22 @@ export default function AppWeb() {
   }, [mapToken, isLive]);
 
   useEffect(() => {
-    if (!mapRef.current || !mapContainerRef.current) return;
+    if (!mapRef.current) return;
     const map = mapRef.current;
-    const container = mapContainerRef.current;
 
     if (placingMode && selectedStatus && selectedReason) {
-      container.style.cursor = "crosshair";
+      // Set cursor on the Mapbox canvas directly (not the container div)
+      map.getCanvas().style.cursor = "crosshair";
+      console.log("[SafeZone] Placing mode ON — map click handler registered");
 
       const handleClick = async (event) => {
-        // Prevent popup-open clicks on the zone-delete button inside popups
-        if (event.target && event.target.tagName === "BUTTON") return;
+        const lngLat = event.lngLat;
+        console.log("[SafeZone] Map clicked at", lngLat);
 
-        const rect = container.getBoundingClientRect();
-        const point = {
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top,
-        };
-        const lngLat = map.unproject(point);
+        if (!lngLat) {
+          setZoneError("Kon locatie niet bepalen — probeer opnieuw");
+          return;
+        }
 
         try {
           await fetchFromApi("/api/zones", {
@@ -570,24 +1034,27 @@ export default function AppWeb() {
               region: "Handmatig gemarkeerd",
             }),
           });
+          console.log("[SafeZone] Zone created successfully");
           setPlacingMode(false);
           setSelectedStatus("");
           setSelectedReason("");
           setZoneError("");
           await loadIncidents();
         } catch (e) {
+          console.error("[SafeZone] Zone creation failed", e);
           setZoneError(e?.message || "Kon zone niet aanmaken");
         }
       };
 
-      container.addEventListener("click", handleClick);
+      map.on("click", handleClick);
       return () => {
-        container.removeEventListener("click", handleClick);
-        container.style.cursor = "";
+        map.off("click", handleClick);
+        map.getCanvas().style.cursor = "";
+        console.log("[SafeZone] Placing mode OFF — handler removed");
       };
     }
 
-    container.style.cursor = "";
+    map.getCanvas().style.cursor = "";
     return undefined;
   }, [placingMode, selectedReason, selectedStatus, loadIncidents]);
 
@@ -1093,45 +1560,91 @@ const styles = {
 };
 
 const adminStyles = {
-  page: {
+  // Login
+  loginPage: {
     minHeight: "100vh",
-    background: COLORS.page,
+    width: "100%",
+    background:
+      "radial-gradient(900px 420px at 15% -15%, rgba(29,78,216,0.12), transparent 70%), #060a14",
     color: COLORS.text,
     fontFamily: "'Manrope', system-ui, sans-serif",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     padding: 20,
     boxSizing: "border-box",
   },
-  card: {
-    maxWidth: 500,
-    margin: "80px auto 0",
+  loginCard: {
+    width: "100%",
+    maxWidth: 420,
     background: COLORS.feedCard,
     border: `1px solid ${COLORS.border}`,
-    borderRadius: 12,
-    padding: 20,
+    borderRadius: 16,
+    padding: "36px 28px",
+    textAlign: "center",
   },
-  headerRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
+  loginLogo: { fontSize: 44, marginBottom: 14 },
+  loginTitle: { margin: "0 0 6px", fontSize: 26, fontWeight: 700 },
+  loginSub: { margin: "0 0 24px", color: COLORS.textDim, fontSize: 13 },
+  label: {
+    display: "block",
+    textAlign: "left",
+    fontSize: 12,
+    fontWeight: 600,
+    color: COLORS.textDim,
+    marginBottom: 5,
   },
-  title: { margin: 0, fontSize: 28 },
-  subtitle: { marginTop: 8, color: COLORS.textDim, fontSize: 13 },
-  form: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 },
+  form: { display: "flex", flexDirection: "column", gap: 14 },
   input: {
+    width: "100%",
     border: `1px solid ${COLORS.border}`,
     background: COLORS.mapCard,
     color: COLORS.text,
     borderRadius: 8,
-    padding: "9px 10px",
+    padding: "10px 12px",
+    fontSize: 14,
+    boxSizing: "border-box",
   },
   primaryBtn: {
     border: "none",
     background: "linear-gradient(180deg,#3b82f6,#1d4ed8)",
     color: "white",
     borderRadius: 8,
-    padding: "9px 10px",
+    padding: "11px",
     fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  // Dashboard page
+  page: {
+    minHeight: "100vh",
+    width: "100%",
+    background:
+      "radial-gradient(900px 420px at 15% -15%, rgba(29,78,216,0.12), transparent 70%), #060a14",
+    color: COLORS.text,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    padding: "24px 28px",
+    boxSizing: "border-box",
+  },
+  pageHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  pageTitle: { margin: 0, fontSize: 28, fontWeight: 700 },
+  pageSub: { margin: "4px 0 0", color: COLORS.textDim, fontSize: 13 },
+  headerActions: { display: "flex", gap: 8, alignItems: "center" },
+  refreshBtn: {
+    border: "1px solid rgba(59,130,246,0.4)",
+    background: "rgba(59,130,246,0.12)",
+    color: "#93c5fd",
+    borderRadius: 8,
+    padding: "8px 14px",
+    fontWeight: 600,
+    fontSize: 13,
     cursor: "pointer",
   },
   ghostBtn: {
@@ -1139,51 +1652,325 @@ const adminStyles = {
     background: COLORS.mapCard,
     color: COLORS.textDim,
     borderRadius: 8,
-    padding: "8px 10px",
+    padding: "8px 14px",
     cursor: "pointer",
+    fontSize: 13,
   },
-  loading: { color: COLORS.textDim, marginBottom: 10 },
-  error: {
-    marginTop: 10,
-    border: "1px solid rgba(239,68,68,0.45)",
-    background: "rgba(127,29,29,0.35)",
-    color: "#fecaca",
+  // Toasts
+  toastStack: {
+    position: "fixed",
+    bottom: 20,
+    right: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    zIndex: 10000,
+    pointerEvents: "none",
+  },
+  toast: {
+    padding: "10px 16px",
     borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 12,
+    fontSize: 13,
+    fontWeight: 600,
+    boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+    animation: "sz-fadein 0.2s ease",
   },
-  list: { display: "flex", flexDirection: "column", gap: 10 },
-  empty: {
-    border: `1px dashed ${COLORS.border}`,
-    borderRadius: 10,
-    padding: 14,
-    color: COLORS.textDim,
+  toastSuccess: {
+    background: "rgba(21,128,61,0.95)",
+    border: "1px solid rgba(34,197,94,0.5)",
+    color: "#dcfce7",
   },
-  item: {
+  toastError: {
+    background: "rgba(153,27,27,0.95)",
+    border: "1px solid rgba(239,68,68,0.5)",
+    color: "#fee2e2",
+  },
+  // Confirm dialog
+  confirmBox: {
+    width: "100%",
+    maxWidth: 400,
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 14,
+    padding: "24px 20px",
+  },
+  confirmMsg: {
+    fontSize: 15,
+    fontWeight: 600,
+    lineHeight: 1.5,
+    marginBottom: 20,
+    color: COLORS.text,
+  },
+  confirmActions: {
+    display: "flex",
+    gap: 8,
+    justifyContent: "flex-end",
+  },
+  // Stats row
+  statsRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+    gap: 10,
+    marginBottom: 12,
+  },
+  statCard: {
+    background: COLORS.feedCard,
     border: `1px solid ${COLORS.border}`,
     borderRadius: 10,
-    background: COLORS.feedCard,
-    padding: 12,
+    padding: "14px 16px",
   },
-  itemTitle: { fontSize: 14, fontWeight: 700, marginBottom: 5 },
-  itemMeta: { color: COLORS.textDim, fontSize: 12, marginBottom: 3 },
-  actions: { display: "flex", gap: 8, marginTop: 8 },
-  acceptBtn: {
+  statValue: { fontSize: 28, fontWeight: 700, lineHeight: 1 },
+  statLabel: { color: COLORS.textDim, fontSize: 12, marginTop: 5 },
+  statLive: {
+    borderColor: "rgba(34,197,94,0.35)",
+    background: "rgba(34,197,94,0.07)",
+  },
+  statMock: {
+    borderColor: "rgba(245,158,11,0.35)",
+    background: "rgba(245,158,11,0.07)",
+  },
+  // Health bar
+  healthBar: {
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 8,
+    padding: "10px 14px",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 16,
+    marginBottom: 14,
+    fontSize: 12,
+    color: COLORS.textDim,
+  },
+  healthItem: { display: "flex", alignItems: "center", gap: 6 },
+  healthDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    flexShrink: 0,
+    display: "inline-block",
+  },
+  // Errors / loading
+  errorBox: {
+    marginBottom: 12,
+    border: "1px solid rgba(239,68,68,0.4)",
+    background: "rgba(127,29,29,0.3)",
+    color: "#fecaca",
+    borderRadius: 8,
+    padding: "10px 12px",
+    fontSize: 13,
+  },
+  loadingMsg: { color: COLORS.textDim, fontSize: 13, marginBottom: 12 },
+  // Tabs
+  tabs: {
+    display: "flex",
+    gap: 2,
+    borderBottom: `1px solid ${COLORS.border}`,
+    marginBottom: 16,
+  },
+  tab: {
     border: "none",
-    background: COLORS.low,
-    color: "#06230f",
-    borderRadius: 7,
-    padding: "7px 10px",
+    background: "transparent",
+    color: COLORS.textDim,
+    padding: "10px 16px",
+    cursor: "pointer",
+    fontSize: 14,
+    fontWeight: 600,
+    borderBottom: "2px solid transparent",
+    marginBottom: -1,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+  },
+  tabActive: {
+    color: COLORS.text,
+    borderBottomColor: "#3b82f6",
+  },
+  tabBadge: {
+    background: "#3b82f6",
+    color: "white",
+    borderRadius: 999,
+    fontSize: 11,
     fontWeight: 700,
+    padding: "1px 6px",
+  },
+  // Zone grid
+  zoneGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+    gap: 12,
+  },
+  emptyState: {
+    gridColumn: "1 / -1",
+    border: `1px dashed ${COLORS.border}`,
+    borderRadius: 12,
+    padding: "36px 20px",
+    textAlign: "center",
+    color: COLORS.textDim,
+    fontSize: 14,
+  },
+  emptyIcon: { fontSize: 30, marginBottom: 10 },
+  // Confidence bar
+  confRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+  },
+  confLabel: {
+    fontSize: 11,
+    color: COLORS.textDim,
+    minWidth: 60,
+  },
+  confTrack: {
+    display: "flex",
+    gap: 3,
+  },
+  confDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+  },
+  // Zone card
+  zoneCard: {
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    padding: "14px 16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  zoneCardTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  statusPill: {
+    borderRadius: 999,
+    padding: "3px 10px",
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  zoneTime: { color: COLORS.textDim, fontSize: 11 },
+  zoneTitle: { fontSize: 14, fontWeight: 700, lineHeight: 1.4 },
+  zoneMeta: {
+    color: COLORS.textDim,
+    fontSize: 12,
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  zoneCoords: {
+    color: COLORS.textDim,
+    fontSize: 11,
+    fontFamily: "monospace",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  viewMapBtn: {
+    border: "none",
+    background: "rgba(59,130,246,0.15)",
+    color: "#93c5fd",
+    borderRadius: 5,
+    padding: "3px 9px",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  zoneActions: { display: "flex", gap: 8, marginTop: 2 },
+  acceptBtn: {
+    flex: 1,
+    border: "1px solid rgba(34,197,94,0.35)",
+    background: "rgba(34,197,94,0.12)",
+    color: COLORS.low,
+    borderRadius: 7,
+    padding: "8px",
+    fontWeight: 700,
+    fontSize: 13,
     cursor: "pointer",
   },
   rejectBtn: {
-    border: "none",
-    background: COLORS.high,
-    color: "#fff",
+    flex: 1,
+    border: "1px solid rgba(239,68,68,0.35)",
+    background: "rgba(239,68,68,0.12)",
+    color: COLORS.high,
     borderRadius: 7,
-    padding: "7px 10px",
+    padding: "8px",
     fontWeight: 700,
+    fontSize: 13,
     cursor: "pointer",
+  },
+  deleteBtn: {
+    border: "1px solid rgba(239,68,68,0.35)",
+    background: "rgba(239,68,68,0.1)",
+    color: COLORS.high,
+    borderRadius: 7,
+    padding: "8px 14px",
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  // Map modal
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.72)",
+    backdropFilter: "blur(4px)",
+    zIndex: 9999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  modalBox: {
+    width: "100%",
+    maxWidth: 580,
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  modalHeader: {
+    padding: "14px 16px",
+    borderBottom: `1px solid ${COLORS.border}`,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  modalTitle: { fontSize: 15, fontWeight: 700, lineHeight: 1.4 },
+  modalSub: {
+    color: COLORS.textDim,
+    fontSize: 12,
+    marginTop: 3,
+    fontFamily: "monospace",
+  },
+  modalClose: {
+    border: "none",
+    background: "rgba(255,255,255,0.06)",
+    color: COLORS.text,
+    borderRadius: 6,
+    width: 28,
+    height: 28,
+    cursor: "pointer",
+    fontSize: 14,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalMap: { width: "100%", height: 320 },
+  modalNoMap: {
+    height: 100,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: COLORS.textDim,
+    fontSize: 13,
   },
 };
