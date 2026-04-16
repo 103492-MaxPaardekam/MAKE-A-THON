@@ -1,40 +1,18 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
-const COLORS = {
-  page: "#060a14",
-  mapCard: "#0b1220",
-  feedCard: "#0f172a",
-  border: "#1e293b",
-  text: "#e2e8f0",
-  textDim: "#94a3b8",
-  high: "#ef4444",
-  medium: "#f59e0b",
-  low: "#22c55e",
-  unverified: "#64748b",
-};
-
-const MANUAL_ZONE_REASONS = {
-  high: ["Luchtaanval", "Beschietingen", "Explosies", "Mijnenveld"],
-  medium: [
-    "Troepenbeweging",
-    "Wegblokkade",
-    "Beperkte toegang",
-    "Onbekende dreiging",
-  ],
-  low: [
-    "Schuilplaats beschikbaar",
-    "Hulppost",
-    "Vrij doorgaan",
-    "Rustig gebied",
-  ],
+const PALETTE = {
+  paper: "#f3f3f5",
+  ink: "#1e2230",
+  muted: "#7d8598",
+  navy: "#101728",
+  navySoft: "#1d293d",
+  navyLine: "#31455f",
+  sidebar: "#f7f8fb",
+  panel: "#ffffff",
+  alert: "#ea3d38",
+  amber: "#c9894e",
+  info: "#182339",
+  border: "#d9dde7",
 };
 
 const API_BASE_URLS = [
@@ -44,200 +22,63 @@ const API_BASE_URLS = [
   "http://127.0.0.1:3001",
 ].filter(Boolean);
 
-function formatRelativeTime(iso) {
-  if (!iso) return "zojuist";
-  const ts = Date.parse(iso);
-  if (Number.isNaN(ts)) return String(iso);
-  const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
-  if (mins < 1) return "zojuist";
-  if (mins < 60) return `${mins} min geleden`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} uur geleden`;
-  return `${Math.floor(hrs / 24)} dag(en) geleden`;
+const FONT_DISPLAY =
+  "'Baskerville Old Face', 'Palatino Linotype', 'Book Antiqua', Georgia, serif";
+const FONT_UI = "'Arial Narrow', Arial, Helvetica, sans-serif";
+
+const NAV_ITEMS = ["MAP", "INCIDENT FEED", "SAFE LOCATIONS", "ALERTS"];
+const LEFT_MENU = ["MAP", "INCIDENT FEED", "SAFE LOCATIONS", "ALERTS"];
+const FALLBACK_SIGNALS = [
+  {
+    id: "fallback-1",
+    title: "Water Level Critical in Sector 4 Canal System",
+    region: "Sector 4",
+    source: "NDS",
+    validationStatus: "verified",
+    status: "high",
+    time: new Date().toISOString(),
+  },
+  {
+    id: "fallback-2",
+    title: "Rolling Power Outage: Utrecht North District",
+    region: "Utrecht North District",
+    source: "Police",
+    validationStatus: "pending",
+    status: "high",
+    time: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "fallback-3",
+    title: "Emergency Shelter Capacity Reached: Hall 7",
+    region: "Hall 7",
+    source: "Red Cross",
+    validationStatus: "verified",
+    status: "low",
+    time: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "fallback-4",
+    title: "Signal Interference Detected in Coastal Zone",
+    region: "Coastal Zone",
+    source: "Telecom",
+    validationStatus: "active",
+    status: "high",
+    time: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+  },
+];
+
+function formatFeedTime(iso) {
+  const stamp = Date.parse(iso || "");
+  if (Number.isNaN(stamp)) return "14:22:05";
+  const date = new Date(stamp);
+  return date.toLocaleTimeString("en-GB", { hour12: false });
 }
 
-function getAreaRadiusKm(incident) {
-  if (incident?.source === "manual" && incident?.status === "low") return 10;
-  if (incident?.status === "high") return 60;
-  if (incident?.status === "medium") return 35;
-  return 20;
-}
-
-function markerColor(incident) {
-  if (incident?.validationStatus === "unverified") return COLORS.unverified;
-  if (incident?.status === "high") return COLORS.high;
-  if (incident?.status === "medium") return COLORS.medium;
-  return COLORS.low;
-}
-
-function createAreaPolygon(lng, lat, radiusKm, steps = 28) {
-  const coords = [];
-  const latRadius = radiusKm / 111.32;
-  const lngRadius = radiusKm / (111.32 * Math.cos((lat * Math.PI) / 180));
-  for (let i = 0; i <= steps; i += 1) {
-    const angle = (i / steps) * Math.PI * 2;
-    coords.push([
-      lng + lngRadius * Math.cos(angle),
-      lat + latRadius * Math.sin(angle),
-    ]);
-  }
-  return coords;
-}
-
-function buildCenters(incidents) {
-  return {
-    type: "FeatureCollection",
-    features: incidents
-      .filter((i) => i?.coordinates?.lat && i?.coordinates?.lng)
-      .map((i) => ({
-        type: "Feature",
-        properties: {
-          id: i.id,
-          status: i.status || "medium",
-          validationStatus: i.validationStatus || "unknown",
-        },
-        geometry: {
-          type: "Point",
-          coordinates: [i.coordinates.lng, i.coordinates.lat],
-        },
-      })),
-  };
-}
-
-function buildPolygons(incidents) {
-  return {
-    type: "FeatureCollection",
-    features: incidents
-      .filter((i) => i?.coordinates?.lat && i?.coordinates?.lng)
-      .map((i) => ({
-        type: "Feature",
-        properties: {
-          id: i.id,
-          status: i.status || "medium",
-          validationStatus: i.validationStatus || "unknown",
-        },
-        geometry: {
-          type: "Polygon",
-          coordinates: [
-            createAreaPolygon(
-              i.coordinates.lng,
-              i.coordinates.lat,
-              getAreaRadiusKm(i),
-            ),
-          ],
-        },
-      })),
-  };
-}
-
-function ensureRiskLayers(map) {
-  if (!map.getSource("risk-centers")) {
-    map.addSource("risk-centers", {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
-    });
-  }
-
-  if (!map.getSource("risk-polygons")) {
-    map.addSource("risk-polygons", {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
-    });
-  }
-
-  if (!map.getLayer("risk-polygons-fill")) {
-    map.addLayer({
-      id: "risk-polygons-fill",
-      type: "fill",
-      source: "risk-polygons",
-      paint: {
-        "fill-color": [
-          "case",
-          ["==", ["get", "validationStatus"], "unverified"],
-          COLORS.unverified,
-          [
-            "match",
-            ["get", "status"],
-            "high",
-            COLORS.high,
-            "medium",
-            COLORS.medium,
-            COLORS.low,
-          ],
-        ],
-        "fill-opacity": [
-          "case",
-          ["==", ["get", "validationStatus"], "unverified"],
-          0.14,
-          0.23,
-        ],
-      },
-    });
-  }
-
-  if (!map.getLayer("risk-polygons-line")) {
-    map.addLayer({
-      id: "risk-polygons-line",
-      type: "line",
-      source: "risk-polygons",
-      paint: {
-        "line-color": [
-          "case",
-          ["==", ["get", "validationStatus"], "unverified"],
-          "#94a3b8",
-          [
-            "match",
-            ["get", "status"],
-            "high",
-            "#fca5a5",
-            "medium",
-            "#fde68a",
-            "#86efac",
-          ],
-        ],
-        "line-width": 1.6,
-        "line-opacity": 0.85,
-      },
-    });
-  }
-
-  if (!map.getLayer("risk-centers")) {
-    map.addLayer({
-      id: "risk-centers",
-      type: "circle",
-      source: "risk-centers",
-      paint: {
-        "circle-radius": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          4,
-          3,
-          8,
-          5,
-          11,
-          8,
-        ],
-        "circle-color": [
-          "case",
-          ["==", ["get", "validationStatus"], "unverified"],
-          COLORS.unverified,
-          [
-            "match",
-            ["get", "status"],
-            "high",
-            COLORS.high,
-            "medium",
-            COLORS.medium,
-            COLORS.low,
-          ],
-        ],
-        "circle-opacity": 0.3,
-        "circle-stroke-width": 1,
-        "circle-stroke-color": "#e2e8f0",
-      },
-    });
-  }
+function deriveTag(signal) {
+  if (signal?.status === "high") return { label: "URGENT", color: PALETTE.alert };
+  if (signal?.status === "medium")
+    return { label: "ALERT", color: PALETTE.amber };
+  return { label: "INFO", color: PALETTE.info };
 }
 
 async function fetchFromApi(path, options = {}) {
@@ -246,15 +87,15 @@ async function fetchFromApi(path, options = {}) {
     try {
       const response = await fetch(`${base}${path}`, options);
       if (!response.ok) {
-        const msg = await response.text();
-        throw new Error(msg || `API ${response.status}`);
+        const text = await response.text();
+        throw new Error(text || `API ${response.status}`);
       }
       return await response.json();
     } catch (error) {
       lastError = error;
     }
   }
-  throw lastError || new Error("API niet bereikbaar");
+  throw lastError || new Error("API unavailable");
 }
 
 function buildBasicAuth(username, password) {
@@ -297,8 +138,8 @@ function AdminPage() {
     }
   }, [loadPendingZones]);
 
-  async function handleLogin(e) {
-    e.preventDefault();
+  async function handleLogin(event) {
+    event.preventDefault();
     const header = buildBasicAuth(username, password);
     localStorage.setItem("safezone-admin-auth", header);
     setAuthHeader(header);
@@ -328,26 +169,26 @@ function AdminPage() {
     return (
       <div style={adminStyles.page}>
         <div style={adminStyles.card}>
-          <h1 style={adminStyles.title}>Safe Zone Admin</h1>
-          <p style={adminStyles.subtitle}>Inloggen om zones te modereren</p>
+          <h1 style={adminStyles.title}>Crisis Signal Admin</h1>
+          <p style={adminStyles.subtitle}>Login to review pending zone reports</p>
           <form onSubmit={handleLogin} style={adminStyles.form}>
             <input
               style={adminStyles.input}
-              placeholder="Gebruikersnaam"
+              placeholder="Username"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(event) => setUsername(event.target.value)}
               required
             />
             <input
               style={adminStyles.input}
               type="password"
-              placeholder="Wachtwoord"
+              placeholder="Password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
               required
             />
             <button style={adminStyles.primaryBtn} type="submit">
-              Inloggen
+              Sign In
             </button>
           </form>
           {error ? <div style={adminStyles.error}>{error}</div> : null}
@@ -359,7 +200,7 @@ function AdminPage() {
   return (
     <div style={adminStyles.page}>
       <div style={adminStyles.headerRow}>
-        <h1 style={adminStyles.title}>Ongeverifieerde zones</h1>
+        <h1 style={adminStyles.title}>Pending Zone Verification</h1>
         <button
           style={adminStyles.ghostBtn}
           onClick={() => {
@@ -368,28 +209,23 @@ function AdminPage() {
             setZones([]);
           }}
         >
-          Uitloggen
+          Logout
         </button>
       </div>
 
-      {loading ? <div style={adminStyles.loading}>Laden...</div> : null}
+      {loading ? <div style={adminStyles.loading}>Loading...</div> : null}
       {error ? <div style={adminStyles.error}>{error}</div> : null}
 
       <div style={adminStyles.list}>
         {zones.length === 0 ? (
-          <div style={adminStyles.empty}>Geen ongeverifieerde zones</div>
+          <div style={adminStyles.empty}>No unverified zones</div>
         ) : (
           zones.map((zone) => (
             <div key={zone.id} style={adminStyles.item}>
               <div style={adminStyles.itemTitle}>{zone.title}</div>
+              <div style={adminStyles.itemMeta}>{zone.region}</div>
               <div style={adminStyles.itemMeta}>
-                {zone.region} | {formatRelativeTime(zone.time)}
-              </div>
-              <div style={adminStyles.itemMeta}>
-                Reden: {zone.reason || "-"}
-              </div>
-              <div style={adminStyles.itemMeta}>
-                Locatie: {zone.coordinates?.lat?.toFixed?.(4)},{" "}
+                {zone.coordinates?.lat?.toFixed?.(4)},{" "}
                 {zone.coordinates?.lng?.toFixed?.(4)}
               </div>
               <div style={adminStyles.actions}>
@@ -397,13 +233,13 @@ function AdminPage() {
                   style={adminStyles.acceptBtn}
                   onClick={() => verifyZone(zone.id)}
                 >
-                  Accepteren
+                  Verify
                 </button>
                 <button
                   style={adminStyles.rejectBtn}
                   onClick={() => rejectZone(zone.id)}
                 >
-                  Afwijzen
+                  Reject
                 </button>
               </div>
             </div>
@@ -414,6 +250,41 @@ function AdminPage() {
   );
 }
 
+function buildMapPoints(incidents) {
+  const withCoords = incidents.filter(
+    (item) =>
+      Number.isFinite(item?.coordinates?.lat) && Number.isFinite(item?.coordinates?.lng),
+  );
+
+  if (withCoords.length >= 2) {
+    const lats = withCoords.map((item) => item.coordinates.lat);
+    const lngs = withCoords.map((item) => item.coordinates.lng);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+
+    return withCoords.slice(0, 6).map((item, index) => {
+      const xRatio =
+        maxLng === minLng ? 0.45 + index * 0.08 : (item.coordinates.lng - minLng) / (maxLng - minLng);
+      const yRatio =
+        maxLat === minLat ? 0.28 + index * 0.12 : 1 - (item.coordinates.lat - minLat) / (maxLat - minLat);
+
+      return {
+        id: item.id,
+        left: `${16 + xRatio * 60}%`,
+        top: `${12 + yRatio * 70}%`,
+      };
+    });
+  }
+
+  return [
+    { id: "point-a", left: "33%", top: "28%" },
+    { id: "point-b", left: "67%", top: "49%" },
+    { id: "point-c", left: "46%", top: "73%" },
+  ];
+}
+
 export default function AppWeb() {
   const pathname =
     typeof window !== "undefined" ? window.location.pathname : "/";
@@ -421,69 +292,53 @@ export default function AppWeb() {
     return <AdminPage />;
   }
 
-  const mapContainerRef = useRef(null);
-  const mapRef = useRef(null);
-  const markersRef = useRef([]);
-  const hasFittedMapRef = useRef(false);
-
-  const [incidents, setIncidents] = useState([]);
-  const [apiStatus, setApiStatus] = useState("loading");
-  const [selectedStatus, setSelectedStatus] = useState("");
-  const [selectedReason, setSelectedReason] = useState("");
-  const [placingMode, setPlacingMode] = useState(false);
-  const [zoneError, setZoneError] = useState("");
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth <= 980 : false,
+  const [incidents, setIncidents] = useState(FALLBACK_SIGNALS);
+  const [statusLine, setStatusLine] = useState("LIVE VERIFICATION STREAM");
+  const [refreshTick, setRefreshTick] = useState(45);
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 1220 : false,
   );
-  const [isDarkMap, setIsDarkMap] = useState(false);
-  const [countdown, setCountdown] = useState(30);
-
-  const mapToken =
-    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
-    process.env.REACT_APP_MAPBOX_TOKEN ||
-    "";
-
-  const isLive = apiStatus.startsWith("live-");
-
-  const sortedIncidents = useMemo(() => {
-    const order = { high: 0, medium: 1, low: 2 };
-    return [...incidents].sort(
-      (a, b) => (order[a.status] ?? 99) - (order[b.status] ?? 99),
-    );
-  }, [incidents]);
-
-  const reasonOptions = selectedStatus
-    ? MANUAL_ZONE_REASONS[selectedStatus]
-    : [];
 
   const loadIncidents = useCallback(async () => {
     try {
       const payload = await fetchFromApi("/api/incidents");
-      setApiStatus(payload?.cacheMeta?.mode || "loading");
-      setIncidents(Array.isArray(payload?.incidents) ? payload.incidents : []);
-      setCountdown(30);
-    } catch {
-      setApiStatus("loading");
-    }
-  }, []);
+      const nextIncidents = Array.isArray(payload?.incidents) && payload.incidents.length > 0
+        ? payload.incidents
+        : FALLBACK_SIGNALS;
 
-  const deleteZone = useCallback(async (zoneId) => {
-    try {
-      await fetchFromApi(`/api/zones/${zoneId}`, { method: "DELETE" });
-      setIncidents((prev) => prev.filter((item) => item.id !== zoneId));
-    } catch (e) {
-      setZoneError(e?.message || "Kon zone niet verwijderen");
+      setIncidents(nextIncidents);
+      setStatusLine(
+        payload?.cacheMeta?.mode === "live-multi-source"
+          ? "LIVE VERIFICATION STREAM"
+          : "DEGRADED SIGNAL STREAM",
+      );
+      setRefreshTick(45);
+    } catch {
+      setIncidents(FALLBACK_SIGNALS);
+      setStatusLine("OFFLINE FALLBACK STREAM");
     }
   }, []);
 
   useEffect(() => {
     const styleEl = document.createElement("style");
     styleEl.textContent = `
-      html, body, #root { width: 100%; min-height: 100%; }
-      body { margin: 0; background: ${COLORS.page}; }
-      .mapboxgl-popup-content { background: transparent !important; box-shadow: none !important; padding: 0 !important; }
-      .mapboxgl-popup-tip { border-top-color: ${COLORS.feedCard} !important; }
-      @keyframes sz-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      html, body, #root { min-height: 100%; width: 100%; }
+      body {
+        margin: 0;
+        background: #dfe3ea;
+        color: ${PALETTE.ink};
+        font-family: ${FONT_UI};
+      }
+      * { box-sizing: border-box; }
+      @keyframes pulseDot {
+        0% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 0 0 rgba(234,61,56,0.55); }
+        70% { transform: translate(-50%, -50%) scale(1.08); box-shadow: 0 0 0 14px rgba(234,61,56,0); }
+        100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 0 0 rgba(234,61,56,0); }
+      }
+      @keyframes tickerMove {
+        from { transform: translateX(0); }
+        to { transform: translateX(-50%); }
+      }
     `;
     document.head.appendChild(styleEl);
     return () => {
@@ -493,534 +348,166 @@ export default function AppWeb() {
 
   useEffect(() => {
     loadIncidents();
-    const timer = setInterval(loadIncidents, 30000);
+    const timer = setInterval(loadIncidents, 45000);
     return () => clearInterval(timer);
   }, [loadIncidents]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const onResize = () => setIsMobile(window.innerWidth <= 980);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
     const interval = setInterval(() => {
-      setCountdown((prev) => (prev > 0 ? prev - 1 : 30));
+      setRefreshTick((prev) => (prev > 0 ? prev - 1 : 45));
     }, 1000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    if (!mapToken || !isLive || !mapContainerRef.current || mapRef.current)
-      return;
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => setIsNarrow(window.innerWidth < 1220);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
-    mapboxgl.accessToken = mapToken;
-    mapRef.current = new mapboxgl.Map({
-      container: mapContainerRef.current,
-      style: isDarkMap
-        ? "mapbox://styles/mapbox/dark-v11"
-        : "mapbox://styles/mapbox/streets-v12",
-      center: [31.2, 48.7],
-      zoom: 5.6,
-      pitch: 60,
-      attributionControl: false,
-    });
+  const feedItems = useMemo(
+    () =>
+      [...incidents]
+        .sort((a, b) => Date.parse(b.time || "") - Date.parse(a.time || ""))
+        .slice(0, 4),
+    [incidents],
+  );
 
-    mapRef.current.on("load", () => {
-      const map = mapRef.current;
-      if (!map) return;
+  const mapPoints = useMemo(() => buildMapPoints(feedItems), [feedItems]);
+  const highlightSignal = feedItems[0] || FALLBACK_SIGNALS[0];
+  const statusWord =
+    highlightSignal?.status === "high"
+      ? "ELEVATED - AMBER"
+      : highlightSignal?.status === "medium"
+        ? "WATCH - AMBER"
+        : "STABLE - INFO";
 
-      map.addSource("mapbox-dem", {
-        type: "raster-dem",
-        url: "mapbox://mapbox.mapbox-terrain-dem-v1",
-        tileSize: 512,
-        maxzoom: 14,
-      });
-
-      map.setTerrain({
-        source: "mapbox-dem",
-        exaggeration: 1.5,
-      });
-
-      map.addLayer({
-        id: "3d-buildings",
-        source: "composite",
-        "source-layer": "building",
-        filter: ["==", "extrude", "true"],
-        type: "fill-extrusion",
-        minzoom: 15,
-        paint: {
-          "fill-extrusion-color": "#aaa",
-          "fill-extrusion-height": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            15,
-            0,
-            15.05,
-            ["get", "height"],
-          ],
-          "fill-extrusion-base": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            15,
-            0,
-            15.05,
-            ["get", "min_height"],
-          ],
-          "fill-extrusion-opacity": 0.6,
-        },
-      });
-
-      ensureRiskLayers(map);
-      const centers = map.getSource("risk-centers");
-      const polygons = map.getSource("risk-polygons");
-      if (centers) centers.setData(buildCenters(incidents));
-      if (polygons) polygons.setData(buildPolygons(incidents));
-    });
-
-    mapRef.current.addControl(
-      new mapboxgl.NavigationControl({ visualizePitch: true }),
-      "top-right",
-    );
-
-    return () => {
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, [mapToken, isLive]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const nextStyle = isDarkMap
-      ? "mapbox://styles/mapbox/dark-v11"
-      : "mapbox://styles/mapbox/streets-v12";
-
-    map.setStyle(nextStyle);
-
-    map.once("style.load", () => {
-      const currentMap = mapRef.current;
-      if (!currentMap) return;
-
-      if (!currentMap.getSource("mapbox-dem")) {
-        currentMap.addSource("mapbox-dem", {
-          type: "raster-dem",
-          url: "mapbox://mapbox.mapbox-terrain-dem-v1",
-          tileSize: 512,
-          maxzoom: 14,
-        });
-      }
-
-      currentMap.setTerrain({
-        source: "mapbox-dem",
-        exaggeration: 1.5,
-      });
-
-      if (!currentMap.getLayer("3d-buildings")) {
-        currentMap.addLayer({
-          id: "3d-buildings",
-          source: "composite",
-          "source-layer": "building",
-          filter: ["==", "extrude", "true"],
-          type: "fill-extrusion",
-          minzoom: 15,
-          paint: {
-            "fill-extrusion-color": "#aaa",
-            "fill-extrusion-height": [
-              "interpolate",
-              ["linear"],
-              ["zoom"],
-              15,
-              0,
-              15.05,
-              ["get", "height"],
-            ],
-            "fill-extrusion-base": [
-              "interpolate",
-              ["linear"],
-              ["zoom"],
-              15,
-              0,
-              15.05,
-              ["get", "min_height"],
-            ],
-            "fill-extrusion-opacity": 0.6,
-          },
-        });
-      }
-
-      ensureRiskLayers(currentMap);
-      const centers = currentMap.getSource("risk-centers");
-      const polygons = currentMap.getSource("risk-polygons");
-      if (centers) centers.setData(buildCenters(incidents));
-      if (polygons) polygons.setData(buildPolygons(incidents));
-    });
-  }, [isDarkMap]);
-
-  useEffect(() => {
-    if (!mapRef.current || !mapContainerRef.current) return;
-    const map = mapRef.current;
-    const container = mapContainerRef.current;
-
-    if (placingMode && selectedStatus && selectedReason) {
-      container.style.cursor = "crosshair";
-
-      const handleClick = async (event) => {
-        if (event.target && event.target.tagName === "BUTTON") return;
-
-        const rect = container.getBoundingClientRect();
-        const point = {
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top,
-        };
-        const lngLat = map.unproject(point);
-
-        try {
-          await fetchFromApi("/api/zones", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              status: selectedStatus,
-              reason: selectedReason,
-              coordinates: {
-                lat: lngLat.lat,
-                lng: lngLat.lng,
-              },
-              region: "Handmatig gemarkeerd",
-            }),
-          });
-          setPlacingMode(false);
-          setSelectedStatus("");
-          setSelectedReason("");
-          setZoneError("");
-          await loadIncidents();
-        } catch (e) {
-          setZoneError(e?.message || "Kon zone niet aanmaken");
-        }
-      };
-
-      container.addEventListener("click", handleClick);
-      return () => {
-        container.removeEventListener("click", handleClick);
-        container.style.cursor = "";
-      };
-    }
-
-    container.style.cursor = "";
-    return undefined;
-  }, [placingMode, selectedReason, selectedStatus, loadIncidents]);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
-
-    const applyLayers = () => {
-      ensureRiskLayers(map);
-      const centers = map.getSource("risk-centers");
-      const polygons = map.getSource("risk-polygons");
-      if (centers) centers.setData(buildCenters(incidents));
-      if (polygons) polygons.setData(buildPolygons(incidents));
-    };
-
-    if (map.isStyleLoaded()) applyLayers();
-    else map.once("load", applyLayers);
-
-    incidents.forEach((incident) => {
-      if (!incident?.coordinates?.lat || !incident?.coordinates?.lng) return;
-
-      const deleteHtml = incident.userCreated
-        ? `<button class="sz-popup-delete" data-zone-id="${incident.id}" style="margin-top:8px;background:#ef4444;border:none;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;">Verwijder zone</button>`
-        : "";
-
-      const verifyHtml =
-        incident.validationStatus === "unverified"
-          ? `<div style="margin-top:6px;padding:4px 7px;border-radius:5px;background:rgba(148,163,184,0.2);color:#cbd5e1;font-size:11px;display:inline-block;">Wacht op verificatie</div>`
-          : "";
-
-      const popupHtml =
-        `<div style="min-width:250px;background:${COLORS.feedCard};color:${COLORS.text};border:1px solid ${COLORS.border};padding:12px;border-radius:10px;font-family:Manrope,system-ui,sans-serif;">` +
-        `<div style="font-size:14px;font-weight:700;line-height:1.4;">${incident.title}</div>` +
-        `<div style="font-size:12px;color:${COLORS.textDim};margin-top:5px;">${incident.region} | ${incident.source}</div>` +
-        `<div style="font-size:12px;color:${COLORS.textDim};margin-top:3px;">Confidence: ${incident.confidenceScore}/5 | ${incident.advice}</div>` +
-        verifyHtml +
-        deleteHtml +
-        `</div>`;
-
-      const popup = new mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml);
-
-      const marker = new mapboxgl.Marker({
-        color: markerColor(incident),
-        scale: 0.88,
-      })
-        .setLngLat([incident.coordinates.lng, incident.coordinates.lat])
-        .setPopup(popup)
-        .addTo(map);
-
-      popup.on("open", () => {
-        setTimeout(() => {
-          const deleteBtn = document.querySelector(
-            `.sz-popup-delete[data-zone-id="${incident.id}"]`,
-          );
-          if (deleteBtn) {
-            deleteBtn.onclick = async () => {
-              const zoneId = deleteBtn.getAttribute("data-zone-id");
-              await deleteZone(zoneId);
-            };
-          }
-        }, 0);
-      });
-
-      markersRef.current.push(marker);
-    });
-
-    if (!hasFittedMapRef.current) {
-      const coords = incidents
-        .filter((i) => i?.coordinates?.lat && i?.coordinates?.lng)
-        .map((i) => [i.coordinates.lng, i.coordinates.lat]);
-
-      if (coords.length > 1) {
-        const bounds = coords.reduce(
-          (acc, [lng, lat]) => acc.extend([lng, lat]),
-          new mapboxgl.LngLatBounds(coords[0], coords[0]),
-        );
-        map.fitBounds(bounds, { padding: 70, maxZoom: 6.2, duration: 850 });
-      }
-
-      hasFittedMapRef.current = true;
-    }
-  }, [incidents, deleteZone]);
-
-  if (!mapToken) {
-    return (
-      <div style={styles.centerPage}>
-        <div style={styles.errorCard}>
-          <h2 style={styles.errorTitle}>Mapbox token ontbreekt</h2>
-          <p style={styles.errorText}>
-            Zet EXPO_PUBLIC_MAPBOX_TOKEN in frontend/.env
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!apiStatus.startsWith("live-")) {
-    return (
-      <div style={styles.centerPage}>
-        <div style={styles.loaderRing} />
-        <h2 style={styles.loadingTitle}>Safe Zone laadt...</h2>
-        <p style={styles.loadingText}>Wachten op live data van de bronnen</p>
-      </div>
-    );
-  }
+  const tickerText = `WIND SPEED 45MPH  •  BRIDGE A-12 CLOSED  •  SECTOR 7 MONITORING ACTIVE  •  NEXT SIGNAL REFRESH ${String(
+    refreshTick,
+  ).padStart(2, "0")}S  •  `;
 
   return (
     <div style={styles.page}>
-      <div style={styles.headerRow}>
-        <div>
-          <h1 style={styles.title}>Safe Zone</h1>
-          <p style={styles.subtitle}>Live veiligheidsupdates op kaart</p>
-        </div>
-        <div style={styles.headerRight}>
-          <div style={styles.statusBadge}>API: {apiStatus}</div>
-          <div style={styles.timerBadge}>Refresh in {countdown}s</div>
-          <button
-            style={styles.themeToggle}
-            onClick={() => setIsDarkMap((prev) => !prev)}
-          >
-            {isDarkMap ? "🗺️ Witte kaart" : "🌙 Donkere kaart"}
-          </button>
-        </div>
-      </div>
-
-      <div style={styles.zoneComposer}>
-        <button
-          style={{
-            ...styles.zoneBtn,
-            ...(selectedStatus === "high"
-              ? styles.zoneBtnHighActive
-              : styles.zoneBtnHigh),
-          }}
-          onClick={() => {
-            setSelectedStatus("high");
-            setSelectedReason("");
-            setPlacingMode(false);
-          }}
-        >
-          Gevaar
-        </button>
-        <button
-          style={{
-            ...styles.zoneBtn,
-            ...(selectedStatus === "medium"
-              ? styles.zoneBtnMediumActive
-              : styles.zoneBtnMedium),
-          }}
-          onClick={() => {
-            setSelectedStatus("medium");
-            setSelectedReason("");
-            setPlacingMode(false);
-          }}
-        >
-          Let op
-        </button>
-        <button
-          style={{
-            ...styles.zoneBtn,
-            ...(selectedStatus === "low"
-              ? styles.zoneBtnLowActive
-              : styles.zoneBtnLow),
-          }}
-          onClick={() => {
-            setSelectedStatus("low");
-            setSelectedReason("");
-            setPlacingMode(false);
-          }}
-        >
-          Veilig
-        </button>
-
-        <select
-          value={selectedReason}
-          onChange={(e) => setSelectedReason(e.target.value)}
-          disabled={!selectedStatus}
-          style={{
-            ...styles.reasonSelect,
-            minWidth: isMobile ? "100%" : styles.reasonSelect.minWidth,
-          }}
-        >
-          <option value="">Kies reden...</option>
-          {reasonOptions.map((reason) => (
-            <option key={reason} value={reason}>
-              {reason}
-            </option>
-          ))}
-        </select>
-
-        <button
-          style={styles.placeBtn}
-          disabled={!selectedStatus || !selectedReason}
-          onClick={() => setPlacingMode((prev) => !prev)}
-        >
-          {placingMode ? "Plaatsing annuleren" : "Plaats op kaart"}
-        </button>
-      </div>
-
-      {placingMode ? (
-        <div style={styles.hintBar}>
-          Klik op de kaart om zone te plaatsen:{" "}
-          <strong>{selectedReason}</strong>
-        </div>
-      ) : null}
-
-      {zoneError ? <div style={styles.errorInline}>{zoneError}</div> : null}
-
       <div
         style={{
-          ...styles.layout,
-          gridTemplateColumns: isMobile
-            ? "1fr"
-            : styles.layout.gridTemplateColumns,
+          ...styles.shell,
+          gridTemplateColumns: isNarrow ? "1fr" : "136px minmax(0, 1fr) 270px",
+          gridTemplateRows: isNarrow ? "74px auto auto auto" : "50px minmax(0, 1fr)",
         }}
       >
-        <div
-          style={{
-            ...styles.mapCard,
-            minHeight: isMobile ? "44vh" : styles.mapCard.minHeight,
-          }}
-        >
-          <div
-            ref={mapContainerRef}
-            style={{
-              ...styles.mapContainer,
-              height: isMobile ? "44vh" : styles.mapContainer.height,
-            }}
-          />
-        </div>
-
-        <div
-          style={{
-            ...styles.feedCard,
-            minHeight: isMobile ? "42vh" : styles.feedCard.minHeight,
-            maxHeight: isMobile ? "52vh" : styles.feedCard.maxHeight,
-          }}
-        >
-          <div style={styles.feedHeader}>
-            Incident Feed ({sortedIncidents.length})
-          </div>
-          <div style={styles.feedList}>
-            {sortedIncidents.map((incident) => (
+        <header style={styles.topbar}>
+          <div style={styles.brand}>CRISIS SIGNAL</div>
+          <nav style={styles.topnav}>
+            {NAV_ITEMS.map((item, index) => (
               <div
-                key={incident.id}
+                key={item}
                 style={{
-                  ...styles.feedItem,
-                  borderLeftColor:
-                    incident.validationStatus === "unverified"
-                      ? COLORS.unverified
-                      : incident.status === "high"
-                        ? COLORS.high
-                        : incident.status === "medium"
-                          ? COLORS.medium
-                          : COLORS.low,
-                  ...(incident.validationStatus === "unverified"
-                    ? styles.feedItemUnverified
-                    : null),
+                  ...styles.topnavItem,
+                  ...(index === 0 ? styles.topnavItemActive : null),
                 }}
               >
-                <div style={styles.feedItemTitle}>{incident.title}</div>
-                <div style={styles.feedMeta}>
-                  {incident.region} | {incident.source} |{" "}
-                  {formatRelativeTime(incident.time)}
-                </div>
-                <div style={styles.feedMeta}>
-                  {incident.validationStatus === "unverified"
-                    ? "Wacht op verificatie"
-                    : `Advice: ${incident.advice}`}
-                </div>
-                {incident.userCreated ? (
-                  <button
-                    style={styles.deleteBtn}
-                    onClick={() => deleteZone(incident.id)}
-                  >
-                    Verwijder zone
-                  </button>
-                ) : null}
+                {item}
+              </div>
+            ))}
+          </nav>
+          <div style={styles.topIcons}>
+            <div style={styles.iconGlyph}>⌂</div>
+            <div style={styles.iconGlyph}>◉</div>
+          </div>
+        </header>
+
+        <aside style={styles.sidebar}>
+          <div style={styles.sidebarStatus}>
+            <div style={styles.sidebarKicker}>OPERATIONAL STATUS</div>
+            <div style={styles.sidebarLabel}>REGION:</div>
+            <div style={styles.sidebarValue}>SECTOR 7</div>
+          </div>
+
+          <div style={styles.sideNav}>
+            {LEFT_MENU.map((item, index) => (
+              <div
+                key={item}
+                style={{
+                  ...styles.sideNavItem,
+                  ...(index === 0 ? styles.sideNavItemActive : null),
+                }}
+              >
+                <span style={styles.sideNavBullet}>{index === 0 ? "◼" : "◈"}</span>
+                {item}
               </div>
             ))}
           </div>
 
-          <div style={styles.feedLegend}>
-            <span style={styles.legendTitle}>Legenda:</span>
-            <span style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: COLORS.high }} />{" "}
-              Onveilig
-            </span>
-            <span style={styles.legendItem}>
-              <span
-                style={{ ...styles.legendDot, background: COLORS.medium }}
-              />{" "}
-              Gemiddeld
-            </span>
-            <span style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: COLORS.low }} />{" "}
-              Veilig
-            </span>
-            <span style={styles.legendItem}>
-              <span
-                style={{ ...styles.legendDot, background: COLORS.unverified }}
-              />{" "}
-              Wacht op verificatie
-            </span>
+          <div style={styles.sidebarBottom}>
+            <div style={styles.signalCard}>
+              <div style={styles.signalCardDot} />
+              <div style={styles.signalCardTitle}>{statusWord}</div>
+              <div style={styles.signalCardText}>
+                Increased regional activity. Avoid {highlightSignal?.region || "Sector 4"}.
+              </div>
+            </div>
+
+            <button style={styles.emergencyButton}>INITIATE EMERGENCY SIGNAL</button>
+          </div>
+        </aside>
+
+        <main style={styles.mapStage}>
+          <div style={styles.mapBackground}>
+            <div style={styles.mapGlow} />
+            <div style={styles.mapTexture} />
+            <div style={styles.mapRoads} />
+            <div style={styles.mapCenterRing} />
+            <div style={styles.mapHud}>LAT: 52.3676° N&nbsp;&nbsp;LON: 4.9041° E&nbsp;&nbsp;ALT: 2M</div>
+            {mapPoints.map((point) => (
+              <div
+                key={point.id}
+                style={{
+                  ...styles.mapPoint,
+                  left: point.left,
+                  top: point.top,
+                }}
+              />
+            ))}
+          </div>
+        </main>
+
+        <section style={styles.feedPanel}>
+          <div style={styles.feedPanelHeader}>
+            <div style={styles.feedTitle}>Latest Signals</div>
+            <div style={styles.feedSubtitle}>{statusLine}</div>
+          </div>
+          <div style={styles.feedList}>
+            {feedItems.map((item) => {
+              const tag = deriveTag(item);
+              return (
+                <div key={item.id} style={styles.feedItem}>
+                  <div style={styles.feedMetaRow}>
+                    <div
+                      style={{
+                        ...styles.feedTag,
+                        background: tag.color,
+                      }}
+                    >
+                      {tag.label}
+                    </div>
+                    <div style={styles.feedClock}>{formatFeedTime(item.time)}</div>
+                  </div>
+                  <div style={styles.feedHeadline}>{item.title}</div>
+                  <div style={styles.feedSourceRow}>
+                    <span>SOURCE: {String(item.source || "NDS").toUpperCase()}</span>
+                    <span>{String(item.validationStatus || "verified").toUpperCase()}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <div style={styles.ticker}>
+          <div style={styles.tickerTrack}>
+            <span>{tickerText}</span>
+            <span>{tickerText}</span>
           </div>
         </div>
       </div>
@@ -1031,334 +518,458 @@ export default function AppWeb() {
 const styles = {
   page: {
     minHeight: "100vh",
-    width: "100%",
-    background:
-      "radial-gradient(900px 420px at 15% -15%, rgba(29,78,216,0.18), transparent 70%), radial-gradient(900px 500px at 100% 0%, rgba(127,29,29,0.25), transparent 60%), #060a14",
-    color: COLORS.text,
-    padding: "20px 22px",
-    boxSizing: "border-box",
-    fontFamily: "'Manrope', system-ui, sans-serif",
+    padding: "0",
+    background: "linear-gradient(180deg, #d7dbe3 0%, #cfd5de 100%)",
   },
-  centerPage: {
+  shell: {
     minHeight: "100vh",
+    display: "grid",
     width: "100%",
-    background: COLORS.page,
-    display: "flex",
-    flexDirection: "column",
+    background: "#e6e9ef",
+  },
+  topbar: {
+    gridColumn: "1 / -1",
+    display: "grid",
+    gridTemplateColumns: "220px 1fr 88px",
     alignItems: "center",
+    background: "#fbfbfc",
+    borderBottom: `1px solid ${PALETTE.border}`,
+    padding: "0 18px",
+    height: 50,
+    boxShadow: "0 1px 0 rgba(255,255,255,0.8) inset",
+    zIndex: 2,
+  },
+  brand: {
+    fontFamily: FONT_DISPLAY,
+    fontSize: 17,
+    fontWeight: 700,
+    letterSpacing: "-0.03em",
+    color: "#2a3143",
+  },
+  topnav: {
+    display: "flex",
     justifyContent: "center",
-    color: COLORS.text,
-    fontFamily: "'Manrope', system-ui, sans-serif",
-  },
-  loaderRing: {
-    width: 66,
-    height: 66,
-    borderRadius: "50%",
-    border: "3px solid rgba(59,130,246,0.3)",
-    borderTopColor: COLORS.high,
-    animation: "sz-spin 0.9s linear infinite",
-  },
-  loadingTitle: { marginTop: 18, marginBottom: 6, fontSize: 24 },
-  loadingText: { margin: 0, color: COLORS.textDim },
-  headerRow: {
-    display: "flex",
-    justifyContent: "space-between",
+    gap: 34,
     alignItems: "center",
-    gap: 12,
-    marginBottom: 12,
+    fontFamily: FONT_DISPLAY,
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#8d94a7",
   },
-  headerRight: {
+  topnavItem: {
+    position: "relative",
+    paddingTop: 4,
+    cursor: "default",
+  },
+  topnavItemActive: {
+    color: PALETTE.alert,
+    textDecoration: "underline",
+    textUnderlineOffset: 5,
+    textDecorationThickness: 2,
+  },
+  topIcons: {
     display: "flex",
-    alignItems: "center",
-    gap: 12,
+    justifyContent: "flex-end",
+    gap: 16,
+    color: "#2e3548",
+    fontSize: 16,
   },
-  statusBadge: {
-    border: `1px solid ${COLORS.border}`,
-    background: COLORS.feedCard,
-    borderRadius: 999,
-    padding: "8px 12px",
-    fontSize: 12,
-    color: COLORS.textDim,
-    whiteSpace: "nowrap",
-  },
-  timerBadge: {
-    background: COLORS.border,
-    color: COLORS.textDim,
-    padding: "6px 12px",
-    borderRadius: 20,
-    fontSize: 12,
-    fontWeight: 500,
-  },
-  themeToggle: {
-    background: COLORS.high,
-    color: "#fff",
-    border: "none",
-    padding: "6px 12px",
-    borderRadius: 20,
-    fontSize: 12,
-    fontWeight: 500,
-    cursor: "pointer",
-  },
-  errorCard: {
-    background: COLORS.feedCard,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 12,
-    padding: "20px 22px",
+  iconGlyph: {
+    width: 18,
     textAlign: "center",
   },
-  errorTitle: { margin: 0, fontSize: 20 },
-  errorText: { marginTop: 8, color: COLORS.textDim },
-  title: { margin: 0, fontSize: 34, lineHeight: 1 },
-  subtitle: { margin: "6px 0 0", color: COLORS.textDim, fontSize: 13 },
-  zoneComposer: {
+  sidebar: {
+    display: "grid",
+    gridTemplateRows: "93px 1fr auto",
+    background: PALETTE.sidebar,
+    borderRight: `1px solid ${PALETTE.border}`,
+    minHeight: 0,
+  },
+  sidebarStatus: {
+    padding: "15px 14px",
+    borderBottom: `1px solid ${PALETTE.border}`,
+  },
+  sidebarKicker: {
+    fontFamily: FONT_UI,
+    fontSize: 8,
+    letterSpacing: "0.18em",
+    color: "#aab1c0",
+    fontWeight: 700,
+  },
+  sidebarLabel: {
+    marginTop: 10,
+    fontFamily: FONT_DISPLAY,
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#60697e",
+  },
+  sidebarValue: {
+    marginTop: 1,
+    fontFamily: FONT_DISPLAY,
+    fontSize: 18,
+    fontWeight: 700,
+    color: "#30384b",
+  },
+  sideNav: {
+    paddingTop: 2,
+  },
+  sideNavItem: {
+    height: 38,
     display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 8,
     alignItems: "center",
+    gap: 9,
+    padding: "0 13px",
+    fontFamily: FONT_UI,
+    fontSize: 10,
+    letterSpacing: "0.12em",
+    color: "#7f8798",
+    fontWeight: 700,
+    borderBottom: `1px solid #edf0f5`,
   },
-  zoneBtn: {
-    border: "1px solid transparent",
-    borderRadius: 8,
-    padding: "8px 12px",
-    color: "#fff",
-    fontSize: 12,
-    cursor: "pointer",
+  sideNavItemActive: {
+    background: "#182339",
+    color: "#ffffff",
+  },
+  sideNavBullet: {
+    fontSize: 9,
+    width: 10,
+    textAlign: "center",
+  },
+  sidebarBottom: {
+    padding: "10px 10px 12px",
+    display: "grid",
+    gap: 12,
+  },
+  signalCard: {
+    background: "#e7ebf3",
+    border: `1px solid #dfe4ed`,
+    minHeight: 63,
+    padding: "10px 10px 8px",
+    position: "relative",
+  },
+  signalCardDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: PALETTE.alert,
+    position: "absolute",
+    left: 10,
+    top: 12,
+  },
+  signalCardTitle: {
+    marginLeft: 14,
+    fontFamily: FONT_UI,
+    fontSize: 9,
+    letterSpacing: "0.18em",
+    fontWeight: 700,
+    color: PALETTE.alert,
+  },
+  signalCardText: {
+    marginTop: 8,
+    fontFamily: FONT_UI,
+    fontSize: 11,
+    lineHeight: 1.35,
+    color: "#6e7486",
     fontWeight: 700,
   },
-  zoneBtnHigh: {
-    background: "rgba(239,68,68,0.3)",
-    borderColor: "rgba(239,68,68,0.5)",
-  },
-  zoneBtnMedium: {
-    background: "rgba(245,158,11,0.25)",
-    borderColor: "rgba(245,158,11,0.45)",
-  },
-  zoneBtnLow: {
-    background: "rgba(34,197,94,0.22)",
-    borderColor: "rgba(34,197,94,0.45)",
-  },
-  zoneBtnHighActive: { background: COLORS.high, borderColor: COLORS.high },
-  zoneBtnMediumActive: {
-    background: COLORS.medium,
-    borderColor: COLORS.medium,
-  },
-  zoneBtnLowActive: { background: COLORS.low, borderColor: COLORS.low },
-  reasonSelect: {
-    border: `1px solid ${COLORS.border}`,
-    background: COLORS.feedCard,
-    color: COLORS.text,
-    borderRadius: 8,
-    padding: "8px 10px",
-    minWidth: 250,
-  },
-  placeBtn: {
+  emergencyButton: {
+    height: 44,
     border: "none",
-    background: "linear-gradient(180deg,#3b82f6,#2563eb)",
-    color: "white",
-    borderRadius: 8,
-    padding: "8px 12px",
+    background: PALETTE.alert,
+    color: "#ffffff",
+    fontFamily: FONT_UI,
+    fontSize: 11,
     fontWeight: 700,
+    letterSpacing: "0.14em",
     cursor: "pointer",
+    boxShadow: "0 0 0 1px rgba(255,255,255,0.2) inset",
   },
-  hintBar: {
-    background: "rgba(59,130,246,0.14)",
-    border: "1px solid rgba(59,130,246,0.3)",
-    color: "#bfdbfe",
-    borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 12,
-    marginBottom: 10,
-  },
-  errorInline: {
-    marginBottom: 10,
-    border: "1px solid rgba(239,68,68,0.45)",
-    background: "rgba(127,29,29,0.35)",
-    color: "#fecaca",
-    borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 12,
-  },
-  layout: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12 },
-  mapCard: {
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 12,
+  mapStage: {
+    position: "relative",
+    minHeight: 0,
     overflow: "hidden",
-    background: COLORS.mapCard,
-    minHeight: "72vh",
-    boxShadow: "0 12px 36px rgba(2,6,20,0.4)",
+    background: "#243142",
   },
-  mapContainer: { width: "100%", height: "72vh" },
-  feedCard: {
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 12,
-    background: COLORS.feedCard,
-    minHeight: "72vh",
-    maxHeight: "72vh",
-    display: "flex",
-    flexDirection: "column",
-    boxShadow: "0 12px 36px rgba(2,6,20,0.38)",
+  mapBackground: {
+    position: "relative",
+    width: "100%",
+    height: "100%",
+    minHeight: 640,
+    background:
+      "radial-gradient(circle at 42% 52%, rgba(127,240,226,0.12), transparent 18%), linear-gradient(180deg, #293444 0%, #202a38 100%)",
+    overflow: "hidden",
   },
-  feedHeader: {
-    padding: "12px 14px",
-    borderBottom: `1px solid ${COLORS.border}`,
-    fontSize: 14,
+  mapGlow: {
+    position: "absolute",
+    inset: 0,
+    background:
+      "radial-gradient(circle at 50% 48%, rgba(122,241,232,0.12), rgba(122,241,232,0.02) 28%, transparent 52%)",
+  },
+  mapTexture: {
+    position: "absolute",
+    inset: 0,
+    opacity: 0.34,
+    backgroundImage:
+      "repeating-linear-gradient(90deg, rgba(126,234,224,0.08) 0, rgba(126,234,224,0.08) 1px, transparent 1px, transparent 42px), repeating-linear-gradient(0deg, rgba(126,234,224,0.06) 0, rgba(126,234,224,0.06) 1px, transparent 1px, transparent 35px)",
+  },
+  mapRoads: {
+    position: "absolute",
+    inset: 0,
+    opacity: 0.5,
+    backgroundImage:
+      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 900 900'%3E%3Cg fill='none' stroke='%2380d9d0' stroke-opacity='0.32' stroke-width='2'%3E%3Cpath d='M32 820C110 665 188 568 254 498s140-114 222-131c79-17 166 0 239 54 77 57 135 145 153 238'/%3E%3Cpath d='M128 70c92 57 168 143 198 244 33 111 19 221-22 313-33 74-87 145-161 206'/%3E%3Cpath d='M870 154c-118 33-206 95-272 165-90 95-149 212-191 358'/%3E%3Cpath d='M184 862c53-74 108-140 165-197 53-54 123-113 208-156 116-58 233-82 343-88'/%3E%3Cpath d='M270 0c7 115 7 234 28 341 11 61 34 132 83 201 50 70 118 121 179 156'/%3E%3Cpath d='M0 283c91 18 182 33 266 85 99 62 181 166 214 294'/%3E%3Cpath d='M334 507c17-52 59-99 115-123 57-24 125-24 181 0 72 31 128 93 151 167'/%3E%3Cpath d='M302 525c26-77 88-143 167-171 71-26 151-19 216 18 68 39 119 108 136 187'/%3E%3C/g%3E%3Cg fill='none' stroke='%2380d9d0' stroke-opacity='0.15' stroke-width='1'%3E%3Cpath d='M95 108l665 675'/%3E%3Cpath d='M115 700l615-530'/%3E%3Cpath d='M456 42l-24 814'/%3E%3Cpath d='M49 445l804 17'/%3E%3C/g%3E%3C/svg%3E\")",
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  },
+  mapCenterRing: {
+    position: "absolute",
+    left: "48%",
+    top: "50%",
+    width: 170,
+    height: 170,
+    transform: "translate(-50%, -50%)",
+    borderRadius: "50%",
+    border: "2px solid rgba(144,240,232,0.33)",
+    boxShadow:
+      "0 0 0 18px rgba(144,240,232,0.07), 0 0 0 52px rgba(144,240,232,0.03)",
+  },
+  mapPoint: {
+    position: "absolute",
+    width: 16,
+    height: 16,
+    borderRadius: "50%",
+    border: "3px solid rgba(255,214,214,0.9)",
+    background: PALETTE.alert,
+    transform: "translate(-50%, -50%)",
+    animation: "pulseDot 2.4s ease-out infinite",
+  },
+  mapHud: {
+    position: "absolute",
+    left: 16,
+    bottom: 14,
+    background: "rgba(7,11,18,0.82)",
+    color: "#f4f5f7",
+    borderLeft: `4px solid ${PALETTE.alert}`,
+    padding: "9px 11px 8px",
+    fontFamily: FONT_UI,
+    fontSize: 11,
+    letterSpacing: "0.08em",
+    fontWeight: 700,
+  },
+  feedPanel: {
+    background: PALETTE.panel,
+    borderLeft: `1px solid ${PALETTE.border}`,
+    display: "grid",
+    gridTemplateRows: "74px 1fr",
+    minHeight: 0,
+  },
+  feedPanelHeader: {
+    background: "#050507",
+    color: "#ffffff",
+    padding: "14px 16px 10px",
+  },
+  feedTitle: {
+    fontFamily: FONT_DISPLAY,
+    fontStyle: "italic",
+    fontSize: 18,
+    fontWeight: 700,
+  },
+  feedSubtitle: {
+    marginTop: 3,
+    fontFamily: FONT_UI,
+    fontSize: 9,
+    letterSpacing: "0.18em",
+    color: "#c9d0db",
     fontWeight: 700,
   },
   feedList: {
-    flex: 1,
-    overflowY: "auto",
-    padding: 10,
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
+    overflow: "auto",
+    background: "#ffffff",
   },
   feedItem: {
-    background: "rgba(15,23,42,0.82)",
-    border: `1px solid ${COLORS.border}`,
-    borderLeft: "3px solid",
-    borderRadius: 8,
-    padding: "10px 10px 9px",
+    padding: "15px 16px 16px",
+    borderBottom: `1px solid #eef1f6`,
   },
-  feedItemUnverified: {
-    background: "rgba(51,65,85,0.23)",
-    borderStyle: "dashed",
-  },
-  feedItemTitle: { fontSize: 13, fontWeight: 700, marginBottom: 5 },
-  feedMeta: { color: COLORS.textDim, fontSize: 11, marginTop: 3 },
-  deleteBtn: {
-    marginTop: 7,
-    border: "none",
-    background: COLORS.high,
-    color: "white",
-    borderRadius: 6,
-    padding: "6px 9px",
-    fontSize: 11,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  feedLegend: {
-    borderTop: `1px solid ${COLORS.border}`,
-    background: "#0b1220",
-    padding: "10px 12px",
+  feedMetaRow: {
     display: "flex",
-    gap: 12,
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 10,
+  },
+  feedTag: {
+    height: 16,
+    minWidth: 44,
+    padding: "0 8px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#ffffff",
+    fontFamily: FONT_UI,
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: "0.12em",
+  },
+  feedClock: {
+    fontFamily: FONT_UI,
+    fontSize: 10,
+    color: "#bec5d2",
+    fontWeight: 700,
+  },
+  feedHeadline: {
+    fontFamily: FONT_DISPLAY,
+    fontSize: 17,
+    lineHeight: 1.2,
+    color: "#272d3f",
+    fontWeight: 700,
+  },
+  feedSourceRow: {
+    marginTop: 13,
+    display: "flex",
+    gap: 18,
     flexWrap: "wrap",
-  },
-  legendTitle: {
-    color: COLORS.textDim,
-    fontSize: 11,
+    fontFamily: FONT_UI,
+    fontSize: 9,
+    letterSpacing: "0.12em",
+    color: "#a5adbb",
     fontWeight: 700,
-    textTransform: "uppercase",
   },
-  legendItem: {
-    color: COLORS.textDim,
-    fontSize: 11,
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
+  ticker: {
+    gridColumn: "1 / -1",
+    height: 20,
+    background: "#06080e",
+    color: "#f5f6f8",
+    overflow: "hidden",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
   },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    display: "inline-block",
+  tickerTrack: {
+    display: "inline-flex",
+    whiteSpace: "nowrap",
+    gap: 36,
+    paddingLeft: 18,
+    fontFamily: FONT_UI,
+    fontSize: 10,
+    lineHeight: "20px",
+    letterSpacing: "0.18em",
+    fontWeight: 700,
+    animation: "tickerMove 18s linear infinite",
   },
 };
 
 const adminStyles = {
   page: {
     minHeight: "100vh",
-    background: COLORS.page,
-    color: COLORS.text,
-    fontFamily: "'Manrope', system-ui, sans-serif",
-    padding: 20,
-    boxSizing: "border-box",
+    background: "linear-gradient(180deg, #eef1f6 0%, #dfe4ed 100%)",
+    padding: 24,
+    fontFamily: FONT_UI,
+    color: PALETTE.ink,
   },
   card: {
-    maxWidth: 500,
-    margin: "80px auto 0",
-    background: COLORS.feedCard,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 12,
-    padding: 20,
+    maxWidth: 420,
+    margin: "10vh auto 0",
+    background: "#ffffff",
+    border: `1px solid ${PALETTE.border}`,
+    padding: 24,
+    boxShadow: "0 18px 50px rgba(16,23,40,0.08)",
   },
   headerRow: {
+    maxWidth: 980,
+    margin: "0 auto 16px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
   },
-  title: { margin: 0, fontSize: 28 },
-  subtitle: { marginTop: 8, color: COLORS.textDim, fontSize: 13 },
-  form: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 },
+  title: {
+    margin: 0,
+    fontFamily: FONT_DISPLAY,
+    fontSize: 30,
+    color: "#262d40",
+  },
+  subtitle: {
+    marginTop: 8,
+    color: "#6b7386",
+    fontSize: 13,
+  },
+  form: {
+    display: "grid",
+    gap: 12,
+    marginTop: 18,
+  },
   input: {
-    border: `1px solid ${COLORS.border}`,
-    background: COLORS.mapCard,
-    color: COLORS.text,
-    borderRadius: 8,
-    padding: "9px 10px",
+    height: 42,
+    padding: "0 12px",
+    border: `1px solid ${PALETTE.border}`,
+    fontSize: 14,
   },
   primaryBtn: {
+    height: 42,
     border: "none",
-    background: "linear-gradient(180deg,#3b82f6,#1d4ed8)",
-    color: "white",
-    borderRadius: 8,
-    padding: "9px 10px",
+    background: PALETTE.alert,
+    color: "#fff",
     fontWeight: 700,
     cursor: "pointer",
   },
   ghostBtn: {
-    border: `1px solid ${COLORS.border}`,
-    background: COLORS.mapCard,
-    color: COLORS.textDim,
-    borderRadius: 8,
-    padding: "8px 10px",
+    height: 38,
+    padding: "0 14px",
+    border: `1px solid ${PALETTE.border}`,
+    background: "#fff",
     cursor: "pointer",
   },
-  loading: { color: COLORS.textDim, marginBottom: 10 },
-  error: {
-    marginTop: 10,
-    border: "1px solid rgba(239,68,68,0.45)",
-    background: "rgba(127,29,29,0.35)",
-    color: "#fecaca",
-    borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 12,
+  loading: {
+    maxWidth: 980,
+    margin: "0 auto 12px",
   },
-  list: { display: "flex", flexDirection: "column", gap: 10 },
+  error: {
+    marginTop: 14,
+    color: "#b91c1c",
+    fontSize: 13,
+  },
+  list: {
+    maxWidth: 980,
+    margin: "0 auto",
+    display: "grid",
+    gap: 12,
+  },
   empty: {
-    border: `1px dashed ${COLORS.border}`,
-    borderRadius: 10,
-    padding: 14,
-    color: COLORS.textDim,
+    background: "#fff",
+    padding: 18,
+    border: `1px solid ${PALETTE.border}`,
   },
   item: {
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 10,
-    background: COLORS.feedCard,
-    padding: 12,
+    background: "#fff",
+    border: `1px solid ${PALETTE.border}`,
+    padding: 18,
   },
-  itemTitle: { fontSize: 14, fontWeight: 700, marginBottom: 5 },
-  itemMeta: { color: COLORS.textDim, fontSize: 12, marginBottom: 3 },
-  actions: { display: "flex", gap: 8, marginTop: 8 },
-  acceptBtn: {
-    border: "none",
-    background: COLORS.low,
-    color: "#06230f",
-    borderRadius: 7,
-    padding: "7px 10px",
+  itemTitle: {
+    fontFamily: FONT_DISPLAY,
+    fontSize: 22,
     fontWeight: 700,
+    marginBottom: 8,
+  },
+  itemMeta: {
+    color: "#6e7688",
+    fontSize: 13,
+    marginTop: 4,
+  },
+  actions: {
+    display: "flex",
+    gap: 10,
+    marginTop: 14,
+  },
+  acceptBtn: {
+    height: 36,
+    padding: "0 14px",
+    border: "none",
+    background: "#1f7a42",
+    color: "#fff",
     cursor: "pointer",
   },
   rejectBtn: {
+    height: 36,
+    padding: "0 14px",
     border: "none",
-    background: COLORS.high,
+    background: PALETTE.alert,
     color: "#fff",
-    borderRadius: 7,
-    padding: "7px 10px",
-    fontWeight: 700,
     cursor: "pointer",
   },
 };
