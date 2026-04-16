@@ -14,13 +14,14 @@ app.use(express.json());
 const PORT = Number(process.env.PORT || 3001);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 30000);
 const ENABLE_DEMO_MODE = process.env.ENABLE_DEMO_MODE !== "false";
-const ENABLE_MONGODB = process.env.ENABLE_MONGODB === "true";
+const ENABLE_MONGODB = process.env.ENABLE_MONGODB === "false";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "safezone2026";
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/safe-zone";
 
-const AIR_ALERT_PRIMARY_URL = process.env.AIR_ALERT_PRIMARY_URL || "";
+const AIR_ALERT_PRIMARY_URL =
+  process.env.AIR_ALERT_PRIMARY_URL || "https://api.alerts.in.ua/api/states";
 const AIR_ALERT_FALLBACK_URL = process.env.AIR_ALERT_FALLBACK_URL || "";
 
 const MANUAL_ZONE_REASONS = {
@@ -155,7 +156,16 @@ async function initMongoDB() {
   }
 }
 
-let incidentCache = withIds(mockIncidents);
+let incidentCache = new Map();
+
+function initIncidentCache() {
+  const initialIncidents = withIds(mockIncidents);
+  initialIncidents.forEach((incident) => {
+    incidentCache.set(incident.id, incident);
+  });
+}
+
+initIncidentCache();
 let cacheMeta = {
   mode: "fallback-mock",
   activeSource: "mock",
@@ -259,15 +269,12 @@ function normalizeSafeLocations() {
 }
 
 function statusFromOblastState(raw) {
-  if (raw?.alert) return "high";
-
   const changedAt = Date.parse(raw?.changed || "");
-  if (!Number.isNaN(changedAt)) {
-    const ageMs = Date.now() - changedAt;
-    if (ageMs <= 2 * 60 * 60 * 1000) {
-      return "medium";
-    }
-  }
+  const isRecent =
+    !Number.isNaN(changedAt) && Date.now() - changedAt <= 2 * 60 * 60 * 1000;
+
+  if (raw?.alert && isRecent) return "high";
+  if (isRecent) return "medium";
 
   return "low";
 }
@@ -429,7 +436,9 @@ async function refreshIncidents() {
 
     const safeLocations = normalizeSafeLocations();
     const persistedUserZones = await loadUserZonesFromMongo();
-    const cachedUserZones = incidentCache.filter((item) => item.userCreated);
+    const cachedUserZones = Array.from(incidentCache.values()).filter(
+      (item) => item.userCreated,
+    );
 
     const userZoneMap = new Map();
     [...cachedUserZones, ...persistedUserZones].forEach((zone) => {
@@ -440,53 +449,58 @@ async function refreshIncidents() {
     const userZones = Array.from(userZoneMap.values());
 
     // Combine multiple sources: alerts + seismic + safe locations
-    const combined = [
+    const newIncidents = [
       ...primaryIncidents,
       ...fallbackIncidents.slice(0, 5),
       ...safeLocations,
       ...userZones,
     ];
 
-    if (combined.length > 0) {
-      incidentCache = withIds(combined);
+    // Create set of IDs that should be active
+    const activeIds = new Set(newIncidents.map((inc) => inc.id));
 
-      // Save to MongoDB if connected
-      if (isMongoConnected()) {
-        const nonUserIncidents = combined.filter((item) => !item.userCreated);
-        await incidentsCollection.deleteMany({ userCreated: { $ne: true } });
-        if (nonUserIncidents.length > 0) {
-          await incidentsCollection.insertMany(nonUserIncidents);
-        }
+    // Remove incidents that are no longer active
+    for (const [id, incident] of incidentCache) {
+      if (!activeIds.has(id)) {
+        incidentCache.delete(id);
       }
-
-      const sourceList = [
-        primaryIncidents.length > 0 && "air-alert-ukraine",
-        fallbackIncidents.length > 0 && "seismic-usgs",
-        userZones.length > 0 && "manual-zones",
-      ]
-        .filter(Boolean)
-        .join(", ");
-
-      cacheMeta = {
-        ...cacheMeta,
-        mode: "live-multi-source",
-        activeSource: sourceList || "mock",
-        lastUpdated: new Date().toISOString(),
-      };
-      return;
     }
+
+    // Add new incidents
+    newIncidents.forEach((incident) => {
+      if (!incidentCache.has(incident.id)) {
+        incidentCache.set(incident.id, incident);
+      }
+    });
+
+    // Save to MongoDB if connected
+    if (isMongoConnected()) {
+      const nonUserIncidents = newIncidents.filter((item) => !item.userCreated);
+      await incidentsCollection.deleteMany({ userCreated: { $ne: true } });
+      if (nonUserIncidents.length > 0) {
+        await incidentsCollection.insertMany(nonUserIncidents);
+      }
+    }
+
+    const sourceList = [
+      primaryIncidents.length > 0 && "air-alert-ukraine",
+      fallbackIncidents.length > 0 && "seismic-usgs",
+      userZones.length > 0 && "manual-zones",
+    ]
+      .filter(Boolean)
+      .join(", ");
 
     cacheMeta = {
       ...cacheMeta,
-      mode: "fallback-mock",
-      activeSource: "mock",
+      mode: "live-multi-source",
+      activeSource: sourceList || "fallback",
       lastUpdated: new Date().toISOString(),
     };
   } catch (error) {
     cacheMeta = {
       ...cacheMeta,
-      mode: "fallback-mock",
-      activeSource: "mock",
+      mode: "fallback",
+      activeSource: "fallback",
       lastUpdated: new Date().toISOString(),
       lastError: error?.message || "unknown-source-error",
     };
@@ -505,7 +519,7 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/incidents", (req, res) => {
   res.json({
-    incidents: incidentCache,
+    incidents: Array.from(incidentCache.values()),
     cacheMeta,
   });
 });
@@ -562,7 +576,7 @@ app.post("/api/zones", async (req, res) => {
       await incidentsCollection.insertOne(zone);
     }
 
-    incidentCache = withIds([zone, ...incidentCache]);
+    incidentCache.set(zone.id, zone);
     cacheMeta = {
       ...cacheMeta,
       lastUpdated: new Date().toISOString(),
@@ -580,7 +594,7 @@ app.post("/api/zones", async (req, res) => {
 
 app.get("/api/zones/unverified", requireAdmin, async (req, res) => {
   try {
-    let zones = incidentCache.filter(
+    let zones = Array.from(incidentCache.values()).filter(
       (item) => item.userCreated && item.validationStatus === "unverified",
     );
 
@@ -604,16 +618,18 @@ app.get("/api/zones/unverified", requireAdmin, async (req, res) => {
 
 app.patch("/api/zones/:id/verify", requireAdmin, async (req, res) => {
   const zoneId = req.params.id;
-  const index = incidentCache.findIndex((item) => item.id === zoneId);
+  const existing = incidentCache.get(zoneId);
 
-  if (index === -1) {
+  if (!existing) {
     return res.status(404).json({ ok: false, message: "Zone not found" });
   }
 
-  incidentCache[index] = {
-    ...incidentCache[index],
+  const updated = {
+    ...existing,
     validationStatus: "verified",
   };
+
+  incidentCache.set(zoneId, updated);
 
   if (isMongoConnected()) {
     await incidentsCollection.updateOne(
@@ -622,20 +638,18 @@ app.patch("/api/zones/:id/verify", requireAdmin, async (req, res) => {
     );
   }
 
-  return res.json({ ok: true, zone: incidentCache[index] });
+  return res.json({ ok: true, zone: updated });
 });
 
 app.delete("/api/zones/:id", async (req, res) => {
   const zoneId = req.params.id;
-  const existing = incidentCache.find(
-    (item) => item.id === zoneId && item.userCreated,
-  );
+  const existing = incidentCache.get(zoneId);
 
-  if (!existing) {
+  if (!existing || !existing.userCreated) {
     return res.status(404).json({ ok: false, message: "Zone not found" });
   }
 
-  incidentCache = incidentCache.filter((item) => item.id !== zoneId);
+  incidentCache.delete(zoneId);
 
   if (isMongoConnected()) {
     await incidentsCollection.deleteOne({ id: zoneId, userCreated: true });
@@ -659,7 +673,7 @@ app.post("/api/demo/trigger-update", (req, res) => {
     validationStatus: "verified",
   };
 
-  incidentCache = [injected, ...incidentCache].slice(0, 100);
+  incidentCache.set(injected.id, injected);
   cacheMeta = {
     ...cacheMeta,
     lastUpdated: new Date().toISOString(),
@@ -680,11 +694,16 @@ async function start() {
   if (mongoConnected) {
     const startupUserZones = await loadUserZonesFromMongo();
     if (startupUserZones.length > 0) {
-      const map = new Map();
-      [...incidentCache, ...startupUserZones].forEach((item) => {
-        if (item?.id) map.set(item.id, item);
+      const merged = [
+        ...Array.from(incidentCache.values()),
+        ...startupUserZones,
+      ];
+      const uniqueMap = new Map();
+      merged.forEach((item) => {
+        if (item?.id) uniqueMap.set(item.id, item);
       });
-      incidentCache = withIds(Array.from(map.values()));
+      incidentCache.clear();
+      uniqueMap.forEach((inc, id) => incidentCache.set(id, inc));
     }
   }
 
