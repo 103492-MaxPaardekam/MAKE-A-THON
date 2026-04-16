@@ -6,8 +6,8 @@ const PALETTE = {
   ink: "#1e2230",
   sidebar: "#f7f8fb",
   panel: "#ffffff",
-  alert: "#ea3d38",
-  amber: "#c9894e",
+  alert: "#ff2a23",
+  amber: "#ff9f0a",
   info: "#182339",
   border: "#d9dde7",
 };
@@ -49,7 +49,7 @@ function deriveTag(signal) {
 function markerColor(status) {
   if (status === "high") return PALETTE.alert;
   if (status === "medium") return PALETTE.amber;
-  return "#58c7b2";
+  return "#00d48a";
 }
 
 function getIncidentsWithCoords(incidents) {
@@ -202,6 +202,7 @@ export default function AppWeb() {
   const [incidents, setIncidents] = useState([]);
   const [statusLine, setStatusLine] = useState("LIVE VERIFICATION STREAM");
   const [refreshTick, setRefreshTick] = useState(30);
+  const [isLoadingIncidents, setIsLoadingIncidents] = useState(true);
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" ? window.innerWidth < 1220 : false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [is3DView, setIs3DView] = useState(true);
@@ -262,6 +263,7 @@ export default function AppWeb() {
   );
 
   const loadIncidents = useCallback(async () => {
+    setIsLoadingIncidents(true);
     try {
       const payload = await fetchFromApi("/api/incidents");
       const nextIncidents = Array.isArray(payload?.incidents) ? payload.incidents : [];
@@ -278,6 +280,8 @@ export default function AppWeb() {
       setIncidents([]);
       setStatusLine("API OFFLINE");
       setRefreshTick(30);
+    } finally {
+      setIsLoadingIncidents(false);
     }
   }, []);
 
@@ -353,8 +357,8 @@ export default function AppWeb() {
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: isDarkMode ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/light-v11",
-      center: [4.9041, 52.3676],
-      zoom: 11.2,
+      center: [31.1656, 48.3794],
+      zoom: 5.6,
       pitch: is3DView ? 58 : 0,
       bearing: is3DView ? -18 : 0,
       antialias: true,
@@ -442,12 +446,19 @@ export default function AppWeb() {
 
       incidentsWithCoords.forEach((item) => {
         const el = document.createElement("div");
+        const glowColor =
+          item.status === "high"
+            ? (isDarkMode ? "rgba(255,42,35,0.34)" : "rgba(255,42,35,0.22)")
+            : item.status === "medium"
+              ? (isDarkMode ? "rgba(255,159,10,0.30)" : "rgba(255,159,10,0.18)")
+              : (isDarkMode ? "rgba(0,212,138,0.26)" : "rgba(0,212,138,0.16)");
+
         el.style.width = "14px";
         el.style.height = "14px";
         el.style.borderRadius = "999px";
         el.style.background = markerColor(item.status);
         el.style.border = "3px solid rgba(255, 241, 241, 0.92)";
-        el.style.boxShadow = `0 0 0 5px ${isDarkMode ? "rgba(234,61,56,0.18)" : "rgba(234,61,56,0.12)"}`;
+        el.style.boxShadow = `0 0 0 6px ${glowColor}, 0 0 16px ${glowColor}`;
 
         const popup = new mapboxgl.Popup({ offset: 16 }).setHTML(
           `<div style="min-width:220px;font-family:${FONT_UI};padding:2px 4px;">
@@ -584,7 +595,14 @@ export default function AppWeb() {
             <div style={styles.feedSubtitle}>{statusLine}</div>
           </div>
           <div style={{ ...styles.feedList, background: theme.panelBg }}>
-            {feedItems.length === 0 ? (
+            {isLoadingIncidents ? (
+              <div style={{ ...styles.feedItem, borderBottom: `1px solid ${theme.feedItemBorder}`, color: theme.panelText }}>
+                <div style={{ ...styles.feedHeadline, color: theme.panelText }}>Loading live API incidents</div>
+                <div style={{ ...styles.feedSourceRow, color: theme.softText }}>
+                  <span>Connecting to /api/incidents</span>
+                </div>
+              </div>
+            ) : feedItems.length === 0 ? (
               <div style={{ ...styles.feedItem, borderBottom: `1px solid ${theme.feedItemBorder}`, color: theme.panelText }}>
                 <div style={styles.feedHeadline}>No live API incidents</div>
                 <div style={{ ...styles.feedSourceRow, color: theme.softText }}>
