@@ -435,6 +435,8 @@ export default function AppWeb() {
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth <= 980 : false,
   );
+  const [isDarkMap, setIsDarkMap] = useState(false);
+  const [countdown, setCountdown] = useState(30);
 
   const mapToken =
     process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
@@ -459,6 +461,7 @@ export default function AppWeb() {
       const payload = await fetchFromApi("/api/incidents");
       setApiStatus(payload?.cacheMeta?.mode || "loading");
       setIncidents(Array.isArray(payload?.incidents) ? payload.incidents : []);
+      setCountdown(30);
     } catch {
       setApiStatus("loading");
     }
@@ -502,17 +505,80 @@ export default function AppWeb() {
   }, []);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 30));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     if (!mapToken || !isLive || !mapContainerRef.current || mapRef.current)
       return;
 
     mapboxgl.accessToken = mapToken;
     mapRef.current = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: "mapbox://styles/mapbox/dark-v11",
+      style: isDarkMap
+        ? "mapbox://styles/mapbox/dark-v11"
+        : "mapbox://styles/mapbox/streets-v12",
       center: [31.2, 48.7],
       zoom: 5.6,
-      pitch: 20,
+      pitch: 60,
       attributionControl: false,
+    });
+
+    mapRef.current.on("load", () => {
+      const map = mapRef.current;
+      if (!map) return;
+
+      map.addSource("mapbox-dem", {
+        type: "raster-dem",
+        url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+        tileSize: 512,
+        maxzoom: 14,
+      });
+
+      map.setTerrain({
+        source: "mapbox-dem",
+        exaggeration: 1.5,
+      });
+
+      map.addLayer({
+        id: "3d-buildings",
+        source: "composite",
+        "source-layer": "building",
+        filter: ["==", "extrude", "true"],
+        type: "fill-extrusion",
+        minzoom: 15,
+        paint: {
+          "fill-extrusion-color": "#aaa",
+          "fill-extrusion-height": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            15,
+            0,
+            15.05,
+            ["get", "height"],
+          ],
+          "fill-extrusion-base": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            15,
+            0,
+            15.05,
+            ["get", "min_height"],
+          ],
+          "fill-extrusion-opacity": 0.6,
+        },
+      });
+
+      ensureRiskLayers(map);
+      const centers = map.getSource("risk-centers");
+      const polygons = map.getSource("risk-polygons");
+      if (centers) centers.setData(buildCenters(incidents));
+      if (polygons) polygons.setData(buildPolygons(incidents));
     });
 
     mapRef.current.addControl(
@@ -531,6 +597,75 @@ export default function AppWeb() {
   }, [mapToken, isLive]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const nextStyle = isDarkMap
+      ? "mapbox://styles/mapbox/dark-v11"
+      : "mapbox://styles/mapbox/streets-v12";
+
+    map.setStyle(nextStyle);
+
+    map.once("style.load", () => {
+      const currentMap = mapRef.current;
+      if (!currentMap) return;
+
+      if (!currentMap.getSource("mapbox-dem")) {
+        currentMap.addSource("mapbox-dem", {
+          type: "raster-dem",
+          url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+          tileSize: 512,
+          maxzoom: 14,
+        });
+      }
+
+      currentMap.setTerrain({
+        source: "mapbox-dem",
+        exaggeration: 1.5,
+      });
+
+      if (!currentMap.getLayer("3d-buildings")) {
+        currentMap.addLayer({
+          id: "3d-buildings",
+          source: "composite",
+          "source-layer": "building",
+          filter: ["==", "extrude", "true"],
+          type: "fill-extrusion",
+          minzoom: 15,
+          paint: {
+            "fill-extrusion-color": "#aaa",
+            "fill-extrusion-height": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              15,
+              0,
+              15.05,
+              ["get", "height"],
+            ],
+            "fill-extrusion-base": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              15,
+              0,
+              15.05,
+              ["get", "min_height"],
+            ],
+            "fill-extrusion-opacity": 0.6,
+          },
+        });
+      }
+
+      ensureRiskLayers(currentMap);
+      const centers = currentMap.getSource("risk-centers");
+      const polygons = currentMap.getSource("risk-polygons");
+      if (centers) centers.setData(buildCenters(incidents));
+      if (polygons) polygons.setData(buildPolygons(incidents));
+    });
+  }, [isDarkMap]);
+
+  useEffect(() => {
     if (!mapRef.current || !mapContainerRef.current) return;
     const map = mapRef.current;
     const container = mapContainerRef.current;
@@ -539,7 +674,6 @@ export default function AppWeb() {
       container.style.cursor = "crosshair";
 
       const handleClick = async (event) => {
-        // Prevent popup-open clicks on the zone-delete button inside popups
         if (event.target && event.target.tagName === "BUTTON") return;
 
         const rect = container.getBoundingClientRect();
@@ -633,11 +767,10 @@ export default function AppWeb() {
         .setPopup(popup)
         .addTo(map);
 
-      // Add event listener to delete button when popup opens
       popup.on("open", () => {
         setTimeout(() => {
           const deleteBtn = document.querySelector(
-            ".sz-popup-delete[data-zone-id]",
+            `.sz-popup-delete[data-zone-id="${incident.id}"]`,
           );
           if (deleteBtn) {
             deleteBtn.onclick = async () => {
@@ -666,7 +799,7 @@ export default function AppWeb() {
 
       hasFittedMapRef.current = true;
     }
-  }, [incidents]);
+  }, [incidents, deleteZone]);
 
   if (!mapToken) {
     return (
@@ -698,7 +831,16 @@ export default function AppWeb() {
           <h1 style={styles.title}>Safe Zone</h1>
           <p style={styles.subtitle}>Live veiligheidsupdates op kaart</p>
         </div>
-        <div style={styles.statusBadge}>API: {apiStatus}</div>
+        <div style={styles.headerRight}>
+          <div style={styles.statusBadge}>API: {apiStatus}</div>
+          <div style={styles.timerBadge}>Refresh in {countdown}s</div>
+          <button
+            style={styles.themeToggle}
+            onClick={() => setIsDarkMap((prev) => !prev)}
+          >
+            {isDarkMap ? "🗺️ Witte kaart" : "🌙 Donkere kaart"}
+          </button>
+        </div>
       </div>
 
       <div style={styles.zoneComposer}>
@@ -918,15 +1060,6 @@ const styles = {
   },
   loadingTitle: { marginTop: 18, marginBottom: 6, fontSize: 24 },
   loadingText: { margin: 0, color: COLORS.textDim },
-  errorCard: {
-    background: COLORS.feedCard,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 12,
-    padding: "20px 22px",
-    textAlign: "center",
-  },
-  errorTitle: { margin: 0, fontSize: 20 },
-  errorText: { marginTop: 8, color: COLORS.textDim },
   headerRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -934,8 +1067,11 @@ const styles = {
     gap: 12,
     marginBottom: 12,
   },
-  title: { margin: 0, fontSize: 34, lineHeight: 1 },
-  subtitle: { margin: "6px 0 0", color: COLORS.textDim, fontSize: 13 },
+  headerRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
   statusBadge: {
     border: `1px solid ${COLORS.border}`,
     background: COLORS.feedCard,
@@ -945,6 +1081,35 @@ const styles = {
     color: COLORS.textDim,
     whiteSpace: "nowrap",
   },
+  timerBadge: {
+    background: COLORS.border,
+    color: COLORS.textDim,
+    padding: "6px 12px",
+    borderRadius: 20,
+    fontSize: 12,
+    fontWeight: 500,
+  },
+  themeToggle: {
+    background: COLORS.high,
+    color: "#fff",
+    border: "none",
+    padding: "6px 12px",
+    borderRadius: 20,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  errorCard: {
+    background: COLORS.feedCard,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    padding: "20px 22px",
+    textAlign: "center",
+  },
+  errorTitle: { margin: 0, fontSize: 20 },
+  errorText: { marginTop: 8, color: COLORS.textDim },
+  title: { margin: 0, fontSize: 34, lineHeight: 1 },
+  subtitle: { margin: "6px 0 0", color: COLORS.textDim, fontSize: 13 },
   zoneComposer: {
     display: "flex",
     flexWrap: "wrap",
