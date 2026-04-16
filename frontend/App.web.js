@@ -474,13 +474,6 @@ export default function AppWeb() {
   }, []);
 
   useEffect(() => {
-    window.safeZoneDeleteZone = deleteZone;
-    return () => {
-      delete window.safeZoneDeleteZone;
-    };
-  }, [deleteZone]);
-
-  useEffect(() => {
     const styleEl = document.createElement("style");
     styleEl.textContent = `
       html, body, #root { width: 100%; min-height: 100%; }
@@ -613,7 +606,7 @@ export default function AppWeb() {
       if (!incident?.coordinates?.lat || !incident?.coordinates?.lng) return;
 
       const deleteHtml = incident.userCreated
-        ? `<button onclick="window.safeZoneDeleteZone && window.safeZoneDeleteZone('${incident.id}')" style="margin-top:8px;background:#ef4444;border:none;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;">Verwijder zone</button>`
+        ? `<button class="sz-popup-delete" data-zone-id="${incident.id}" style="margin-top:8px;background:#ef4444;border:none;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;">Verwijder zone</button>`
         : "";
 
       const verifyHtml =
@@ -630,13 +623,30 @@ export default function AppWeb() {
         deleteHtml +
         `</div>`;
 
+      const popup = new mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml);
+
       const marker = new mapboxgl.Marker({
         color: markerColor(incident),
         scale: 0.88,
       })
         .setLngLat([incident.coordinates.lng, incident.coordinates.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml))
+        .setPopup(popup)
         .addTo(map);
+
+      // Add event listener to delete button when popup opens
+      popup.on("open", () => {
+        setTimeout(() => {
+          const deleteBtn = document.querySelector(
+            ".sz-popup-delete[data-zone-id]",
+          );
+          if (deleteBtn) {
+            deleteBtn.onclick = async () => {
+              const zoneId = deleteBtn.getAttribute("data-zone-id");
+              await deleteZone(zoneId);
+            };
+          }
+        }, 0);
+      });
 
       markersRef.current.push(marker);
     });
