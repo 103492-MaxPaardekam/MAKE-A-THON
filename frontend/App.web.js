@@ -12,59 +12,27 @@ const PALETTE = {
   border: "#d9dde7",
 };
 
-const API_BASE_URLS = [
-  process.env.EXPO_PUBLIC_API_BASE_URL,
-  process.env.REACT_APP_API_BASE_URL,
-  "http://localhost:3001",
-  "http://127.0.0.1:3001",
-].filter(Boolean);
+const API_BASE_URLS = (() => {
+  const browserHost =
+    typeof window !== "undefined" && window.location?.hostname
+      ? window.location.hostname
+      : "";
+
+  const candidates = [
+    browserHost ? `http://${browserHost}:3001` : "",
+    "http://127.0.0.1:3001",
+    "http://localhost:3001",
+    process.env.EXPO_PUBLIC_API_BASE_URL,
+    process.env.REACT_APP_API_BASE_URL,
+  ].filter(Boolean);
+
+  return [...new Set(candidates)];
+})();
 
 const FONT_DISPLAY =
   "'Baskerville Old Face', 'Palatino Linotype', 'Book Antiqua', Georgia, serif";
 const FONT_UI = "'Arial Narrow', Arial, Helvetica, sans-serif";
 const NAV_ITEMS = ["MAP", "INCIDENT FEED", "SAFE LOCATIONS", "ALERTS"];
-const FALLBACK_SIGNALS = [
-  {
-    id: "fallback-1",
-    title: "Water Level Critical in Sector 4 Canal System",
-    region: "Sector 4",
-    source: "NDS",
-    validationStatus: "verified",
-    status: "high",
-    time: new Date().toISOString(),
-    coordinates: { lat: 52.3676, lng: 4.9041 },
-  },
-  {
-    id: "fallback-2",
-    title: "Rolling Power Outage: Utrecht North District",
-    region: "Utrecht North District",
-    source: "Police",
-    validationStatus: "pending",
-    status: "high",
-    time: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
-    coordinates: { lat: 52.0907, lng: 5.1214 },
-  },
-  {
-    id: "fallback-3",
-    title: "Emergency Shelter Capacity Reached: Hall 7",
-    region: "Hall 7",
-    source: "Red Cross",
-    validationStatus: "verified",
-    status: "low",
-    time: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-    coordinates: { lat: 51.9244, lng: 4.4777 },
-  },
-  {
-    id: "fallback-4",
-    title: "Signal Interference Detected in Coastal Zone",
-    region: "Coastal Zone",
-    source: "Telecom",
-    validationStatus: "active",
-    status: "high",
-    time: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-    coordinates: { lat: 52.3874, lng: 4.6462 },
-  },
-];
 
 function formatFeedTime(iso) {
   const stamp = Date.parse(iso || "");
@@ -231,33 +199,84 @@ export default function AppWeb() {
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
   if (pathname.startsWith("/admin")) return <AdminPage />;
 
-  const [incidents, setIncidents] = useState(FALLBACK_SIGNALS);
+  const [incidents, setIncidents] = useState([]);
   const [statusLine, setStatusLine] = useState("LIVE VERIFICATION STREAM");
   const [refreshTick, setRefreshTick] = useState(30);
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" ? window.innerWidth < 1220 : false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [is3DView, setIs3DView] = useState(true);
+  const [familyMessageVisible, setFamilyMessageVisible] = useState(false);
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
+  const hasAutoFittedRef = useRef(false);
+  const userMovedMapRef = useRef(false);
   const mapToken = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.REACT_APP_MAPBOX_TOKEN || "";
+
+  const theme = useMemo(
+    () =>
+      isDarkMode
+        ? {
+            pageBg: "linear-gradient(180deg, #0a0f18 0%, #111827 100%)",
+            shellBg: "#0f1724",
+            topbarBg: "#111826",
+            topbarBorder: "#243042",
+            topbarText: "#edf1f7",
+            navText: "#8e99ad",
+            sidebarBg: "#0d1522",
+            sidebarBorder: "#223044",
+            panelBg: "#101926",
+            panelText: "#f2f5f9",
+            cardBg: "#121d2c",
+            softText: "#95a2b8",
+            feedItemBorder: "#1d2938",
+            tickerBg: "#070a11",
+            tickerText: "#f5f6f8",
+            mapControlBg: "rgba(10, 16, 27, 0.84)",
+            mapControlBorder: "rgba(255,255,255,0.18)",
+            frameOverlay:
+              "linear-gradient(180deg, rgba(6,10,18,0.02), rgba(6,10,18,0.18)), radial-gradient(circle at 50% 48%, rgba(122,241,232,0.08), transparent 40%)",
+          }
+        : {
+            pageBg: "linear-gradient(180deg, #d7dbe3 0%, #cfd5de 100%)",
+            shellBg: "#e6e9ef",
+            topbarBg: "#fbfbfc",
+            topbarBorder: "#d9dde7",
+            topbarText: "#2a3143",
+            navText: "#8d94a7",
+            sidebarBg: "#f7f8fb",
+            sidebarBorder: "#d9dde7",
+            panelBg: "#ffffff",
+            panelText: "#1f2638",
+            cardBg: "#e7ebf3",
+            softText: "#6e7486",
+            feedItemBorder: "#eef1f6",
+            tickerBg: "#06080e",
+            tickerText: "#f5f6f8",
+            mapControlBg: "rgba(10, 16, 27, 0.84)",
+            mapControlBorder: "rgba(255,255,255,0.18)",
+            frameOverlay:
+              "linear-gradient(180deg, rgba(6,10,18,0.02), rgba(6,10,18,0.18)), radial-gradient(circle at 50% 48%, rgba(122,241,232,0.08), transparent 40%)",
+          },
+    [isDarkMode],
+  );
 
   const loadIncidents = useCallback(async () => {
     try {
       const payload = await fetchFromApi("/api/incidents");
-      const nextIncidents = Array.isArray(payload?.incidents) && payload.incidents.length > 0
-        ? payload.incidents
-        : FALLBACK_SIGNALS;
+      const nextIncidents = Array.isArray(payload?.incidents) ? payload.incidents : [];
       setIncidents(nextIncidents);
       setStatusLine(
         payload?.cacheMeta?.mode === "live-multi-source"
           ? "LIVE VERIFICATION STREAM"
-          : "DEGRADED SIGNAL STREAM",
+          : payload?.cacheMeta?.mode
+            ? String(payload.cacheMeta.mode).replaceAll("-", " ").toUpperCase()
+            : "LIVE API STREAM",
       );
       setRefreshTick(30);
     } catch {
-      setIncidents(FALLBACK_SIGNALS);
-      setStatusLine("OFFLINE FALLBACK STREAM");
+      setIncidents([]);
+      setStatusLine("API OFFLINE");
       setRefreshTick(30);
     }
   }, []);
@@ -266,7 +285,7 @@ export default function AppWeb() {
     const styleEl = document.createElement("style");
     styleEl.textContent = `
       html, body, #root { min-height: 100%; width: 100%; }
-      body { margin: 0; background: #dfe3ea; color: ${PALETTE.ink}; font-family: ${FONT_UI}; }
+      body { margin: 0; background: ${isDarkMode ? "#0a0f18" : "#dfe3ea"}; color: ${theme.panelText}; font-family: ${FONT_UI}; }
       * { box-sizing: border-box; }
       .mapboxgl-popup-content { padding: 8px 10px !important; border-radius: 10px !important; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18) !important; }
       .mapboxgl-popup-tip { border-top-color: white !important; }
@@ -279,7 +298,7 @@ export default function AppWeb() {
     return () => {
       if (document.head.contains(styleEl)) document.head.removeChild(styleEl);
     };
-  }, []);
+  }, [isDarkMode, theme.panelText]);
 
   useEffect(() => {
     loadIncidents();
@@ -309,14 +328,24 @@ export default function AppWeb() {
     [incidents],
   );
   const incidentsWithCoords = useMemo(() => getIncidentsWithCoords(incidents), [incidents]);
-  const highlightSignal = feedItems[0] || FALLBACK_SIGNALS[0];
+  const highlightSignal = feedItems[0] || null;
   const hudText = useMemo(() => getHudText(feedItems), [feedItems]);
   const statusWord =
-    highlightSignal?.status === "high"
+    !highlightSignal
+      ? "NO LIVE API DATA"
+      : highlightSignal?.status === "high"
       ? "ELEVATED - AMBER"
       : highlightSignal?.status === "medium"
         ? "WATCH - AMBER"
         : "STABLE - INFO";
+
+  useEffect(() => {
+    if (!familyMessageVisible) return undefined;
+    const timeout = setTimeout(() => {
+      setFamilyMessageVisible(false);
+    }, 6000);
+    return () => clearTimeout(timeout);
+  }, [familyMessageVisible]);
 
   useEffect(() => {
     if (!mapToken || !mapContainerRef.current || mapRef.current) return undefined;
@@ -333,6 +362,18 @@ export default function AppWeb() {
     });
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    map.on("dragstart", () => {
+      userMovedMapRef.current = true;
+    });
+    map.on("zoomstart", () => {
+      userMovedMapRef.current = true;
+    });
+    map.on("rotatestart", () => {
+      userMovedMapRef.current = true;
+    });
+    map.on("pitchstart", () => {
+      userMovedMapRef.current = true;
+    });
     return () => {
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
@@ -424,7 +465,7 @@ export default function AppWeb() {
         markersRef.current.push(marker);
       });
 
-      if (incidentsWithCoords.length > 1) {
+      if (!hasAutoFittedRef.current && !userMovedMapRef.current && incidentsWithCoords.length > 1) {
         const bounds = incidentsWithCoords.reduce(
           (acc, item) => acc.extend([item.coordinates.lng, item.coordinates.lat]),
           new mapboxgl.LngLatBounds(
@@ -433,12 +474,14 @@ export default function AppWeb() {
           ),
         );
         map.fitBounds(bounds, { padding: 70, duration: 900, maxZoom: 12.5 });
-      } else if (incidentsWithCoords.length === 1) {
+        hasAutoFittedRef.current = true;
+      } else if (!hasAutoFittedRef.current && !userMovedMapRef.current && incidentsWithCoords.length === 1) {
         map.easeTo({
           center: [incidentsWithCoords[0].coordinates.lng, incidentsWithCoords[0].coordinates.lat],
           zoom: 12.5,
           duration: 900,
         });
+        hasAutoFittedRef.current = true;
       }
     };
 
@@ -449,34 +492,31 @@ export default function AppWeb() {
   const tickerText = `WIND SPEED 45MPH  •  BRIDGE A-12 CLOSED  •  SECTOR 7 MONITORING ACTIVE  •  NEXT SIGNAL REFRESH ${String(refreshTick).padStart(2, "0")}S  •  `;
 
   return (
-    <div style={styles.page}>
+    <div style={{ ...styles.page, background: theme.pageBg, color: theme.panelText }}>
       <div
         style={{
           ...styles.shell,
+          background: theme.shellBg,
           gridTemplateColumns: isNarrow ? "1fr" : "136px minmax(0, 1fr) 270px",
           gridTemplateRows: isNarrow ? "74px auto auto auto" : "50px minmax(0, 1fr)",
         }}
       >
-        <header style={styles.topbar}>
-          <div style={styles.brand}>CRISIS SIGNAL</div>
-          <nav style={styles.topnav}>
+        <header style={{ ...styles.topbar, background: theme.topbarBg, borderBottom: `1px solid ${theme.topbarBorder}` }}>
+          <div style={{ ...styles.brand, color: theme.topbarText }}>CRISIS SIGNAL</div>
+          <nav style={{ ...styles.topnav, color: theme.navText }}>
             {NAV_ITEMS.map((item, index) => (
               <div key={item} style={{ ...styles.topnavItem, ...(index === 0 ? styles.topnavItemActive : null) }}>
                 {item}
               </div>
             ))}
           </nav>
-          <div style={styles.topIcons}>
-            <div style={styles.iconGlyph}>⌂</div>
-            <div style={styles.iconGlyph}>◉</div>
-          </div>
         </header>
 
-        <aside style={styles.sidebar}>
-          <div style={styles.sidebarStatus}>
+        <aside style={{ ...styles.sidebar, background: theme.sidebarBg, borderRight: `1px solid ${theme.sidebarBorder}` }}>
+          <div style={{ ...styles.sidebarStatus, borderBottom: `1px solid ${theme.sidebarBorder}` }}>
             <div style={styles.sidebarKicker}>OPERATIONAL STATUS</div>
-            <div style={styles.sidebarLabel}>REGION:</div>
-            <div style={styles.sidebarValue}>SECTOR 7</div>
+            <div style={{ ...styles.sidebarLabel, color: theme.softText }}>REGION:</div>
+            <div style={{ ...styles.sidebarValue, color: theme.panelText }}>SECTOR 7</div>
           </div>
           <div style={styles.sideNav}>
             {NAV_ITEMS.map((item, index) => (
@@ -487,21 +527,44 @@ export default function AppWeb() {
             ))}
           </div>
           <div style={styles.sidebarBottom}>
-            <div style={styles.signalCard}>
+            <div style={{ ...styles.signalCard, background: theme.cardBg, border: `1px solid ${theme.topbarBorder}` }}>
               <div style={styles.signalCardDot} />
               <div style={styles.signalCardTitle}>{statusWord}</div>
-              <div style={styles.signalCardText}>
-                Increased regional activity. Avoid {highlightSignal?.region || "Sector 4"}.
+              <div style={{ ...styles.signalCardText, color: theme.softText }}>
+                {highlightSignal
+                  ? `Increased regional activity. Avoid ${highlightSignal.region || "affected area"}.`
+                  : "No live danger or safety signals are currently available from the API."}
               </div>
             </div>
-            <button style={styles.emergencyButton}>INITIATE EMERGENCY SIGNAL</button>
+            <button
+              style={styles.emergencyButton}
+              onClick={() => setFamilyMessageVisible(true)}
+            >
+              TELL FAMILY I AM SAFE
+            </button>
+            {familyMessageVisible ? (
+              <div
+                style={{
+                  ...styles.familyMessageCard,
+                  background: theme.panelBg,
+                  border: `1px solid ${theme.topbarBorder}`,
+                  color: theme.panelText,
+                }}
+              >
+                <div style={styles.familyMessageTitle}>DEMO MESSAGE SENT</div>
+                <div style={{ ...styles.familyMessageText, color: theme.softText }}>
+                  Your family sees: "I am safe, my last known location is active,
+                  and I will send another update soon."
+                </div>
+              </div>
+            ) : null}
           </div>
         </aside>
 
         <main style={styles.mapStage}>
           <div style={styles.mapBackground}>
             {mapToken ? <div ref={mapContainerRef} style={styles.mapCanvas} /> : <div style={styles.mapMissing}>Mapbox token missing in frontend/.env</div>}
-            <div style={styles.mapOverlayFrame} />
+            <div style={{ ...styles.mapOverlayFrame, background: theme.frameOverlay }} />
             <div style={styles.mapControls}>
               <button style={{ ...styles.mapControlButton, ...(isDarkMode ? styles.mapControlButtonActive : null) }} onClick={() => setIsDarkMode((prev) => !prev)}>
                 {isDarkMode ? "DARK" : "LIGHT"}
@@ -515,22 +578,29 @@ export default function AppWeb() {
           </div>
         </main>
 
-        <section style={styles.feedPanel}>
+        <section style={{ ...styles.feedPanel, background: theme.panelBg, borderLeft: `1px solid ${theme.sidebarBorder}` }}>
           <div style={styles.feedPanelHeader}>
             <div style={styles.feedTitle}>Latest Signals</div>
             <div style={styles.feedSubtitle}>{statusLine}</div>
           </div>
-          <div style={styles.feedList}>
-            {feedItems.map((item) => {
+          <div style={{ ...styles.feedList, background: theme.panelBg }}>
+            {feedItems.length === 0 ? (
+              <div style={{ ...styles.feedItem, borderBottom: `1px solid ${theme.feedItemBorder}`, color: theme.panelText }}>
+                <div style={styles.feedHeadline}>No live API incidents</div>
+                <div style={{ ...styles.feedSourceRow, color: theme.softText }}>
+                  <span>Waiting for `/api/incidents` data</span>
+                </div>
+              </div>
+            ) : feedItems.map((item) => {
               const tag = deriveTag(item);
               return (
-                <div key={item.id} style={styles.feedItem}>
+                <div key={item.id} style={{ ...styles.feedItem, borderBottom: `1px solid ${theme.feedItemBorder}` }}>
                   <div style={styles.feedMetaRow}>
                     <div style={{ ...styles.feedTag, background: tag.color }}>{tag.label}</div>
                     <div style={styles.feedClock}>{formatFeedTime(item.time)}</div>
                   </div>
-                  <div style={styles.feedHeadline}>{item.title}</div>
-                  <div style={styles.feedSourceRow}>
+                  <div style={{ ...styles.feedHeadline, color: theme.panelText }}>{item.title}</div>
+                  <div style={{ ...styles.feedSourceRow, color: theme.softText }}>
                     <span>SOURCE: {String(item.source || "NDS").toUpperCase()}</span>
                     <span>{String(item.validationStatus || "verified").toUpperCase()}</span>
                   </div>
@@ -540,8 +610,8 @@ export default function AppWeb() {
           </div>
         </section>
 
-        <div style={styles.ticker}>
-          <div style={styles.tickerTrack}>
+        <div style={{ ...styles.ticker, background: theme.tickerBg, color: theme.tickerText }}>
+          <div style={{ ...styles.tickerTrack, color: theme.tickerText }}>
             <span>{tickerText}</span>
             <span>{tickerText}</span>
           </div>
@@ -557,7 +627,7 @@ const styles = {
   topbar: {
     gridColumn: "1 / -1",
     display: "grid",
-    gridTemplateColumns: "220px 1fr 88px",
+    gridTemplateColumns: "220px 1fr",
     alignItems: "center",
     background: "#fbfbfc",
     borderBottom: `1px solid ${PALETTE.border}`,
@@ -570,8 +640,6 @@ const styles = {
   topnav: { display: "flex", justifyContent: "center", gap: 34, alignItems: "center", fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, color: "#8d94a7" },
   topnavItem: { position: "relative", paddingTop: 4, cursor: "default" },
   topnavItemActive: { color: PALETTE.alert, textDecoration: "underline", textUnderlineOffset: 5, textDecorationThickness: 2 },
-  topIcons: { display: "flex", justifyContent: "flex-end", gap: 16, color: "#2e3548", fontSize: 16 },
-  iconGlyph: { width: 18, textAlign: "center" },
   sidebar: { display: "grid", gridTemplateRows: "93px 1fr auto", background: PALETTE.sidebar, borderRight: `1px solid ${PALETTE.border}`, minHeight: 0 },
   sidebarStatus: { padding: "15px 14px", borderBottom: `1px solid ${PALETTE.border}` },
   sidebarKicker: { fontFamily: FONT_UI, fontSize: 8, letterSpacing: "0.18em", color: "#aab1c0", fontWeight: 700 },
@@ -587,6 +655,9 @@ const styles = {
   signalCardTitle: { marginLeft: 14, fontFamily: FONT_UI, fontSize: 9, letterSpacing: "0.18em", fontWeight: 700, color: PALETTE.alert },
   signalCardText: { marginTop: 8, fontFamily: FONT_UI, fontSize: 11, lineHeight: 1.35, color: "#6e7486", fontWeight: 700 },
   emergencyButton: { height: 44, border: "none", background: PALETTE.alert, color: "#ffffff", fontFamily: FONT_UI, fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", cursor: "pointer", boxShadow: "0 0 0 1px rgba(255,255,255,0.2) inset" },
+  familyMessageCard: { padding: "12px 12px 11px", boxShadow: "0 10px 24px rgba(0,0,0,0.14)" },
+  familyMessageTitle: { fontFamily: FONT_UI, fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#23b26d" },
+  familyMessageText: { marginTop: 8, fontFamily: FONT_UI, fontSize: 12, lineHeight: 1.45, fontWeight: 700 },
   mapStage: { position: "relative", minHeight: 0, overflow: "hidden", background: "#243142" },
   mapBackground: { position: "relative", width: "100%", height: "100%", minHeight: 640, background: "linear-gradient(180deg, #293444 0%, #202a38 100%)", overflow: "hidden" },
   mapCanvas: { position: "absolute", inset: 0 },
