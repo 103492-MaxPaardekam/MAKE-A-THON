@@ -43,7 +43,6 @@ const MANUAL_ZONE_REASONS = {
 const UKRAINE_OBLAST_COORDS = {
   "Vinnytsia oblast": { lat: 49.2331, lng: 28.4682 },
   "Volyn oblast": { lat: 50.7472, lng: 25.3254 },
-  "Dnipropetrovsk oblast": { lat: 48.4647, lng: 35.0462 },
   "Donetsk oblast": { lat: 48.0159, lng: 37.8028 },
   "Zhytomyr oblast": { lat: 50.2547, lng: 28.6587 },
   "Zakarpattia oblast": { lat: 48.6208, lng: 22.2879 },
@@ -63,12 +62,79 @@ const UKRAINE_OBLAST_COORDS = {
   "Kherson oblast": { lat: 46.6354, lng: 32.6169 },
   "Khmelnytskyi oblast": { lat: 49.4229, lng: 26.9871 },
   "Cherkasy oblast": { lat: 49.4444, lng: 32.0598 },
-  "Chernivtsi oblast": { lat: 48.2921, lng: 25.9358 },
-  "Chernihiv oblast": { lat: 51.4982, lng: 31.2893 },
   "Autonomous Republic of Crimea": { lat: 44.9521, lng: 34.1024 },
   Kyiv: { lat: 50.4501, lng: 30.5234 },
   Sevastopol: { lat: 44.6167, lng: 33.5254 },
 };
+
+const STATIC_ALERT_ZONES = [
+  {
+    id: "alert-zaporizhzhia",
+    title: "Zaporizhzhia Oblast — Elevated Risk Zone",
+    region: "Zaporizhzhia oblast",
+    coordinates: { lat: 47.8388, lng: 35.1396 },
+    type: "frontline",
+  },
+  {
+    id: "alert-Tsjernihiv",
+    title: "Tsjernihiv - war plains may cross over",
+    region: "Tsjernihiv",
+    coordinates: { lat: 51.3000, lng: 31.1800 },
+    type: "may airplane go across",
+  }
+];
+
+const STATIC_DANGER_ZONES = [
+  {
+    id: "danger-luhansk",
+    title: "Luhansk Oblast — Active Conflict Zone",
+    region: "Luhansk oblast",
+    coordinates: { lat: 48.574, lng: 39.3078 },
+    type: "conflict",
+  },
+  {
+    id: "alert-donetsk",
+    title: "Donetsk Oblast — Active Frontline Area",
+    region: "Donetsk oblast",
+    coordinates: { lat: 48.0159, lng: 37.8028 },
+    type: "frontline",
+  },
+  {
+    id: "alet-kyiv",
+    title: "kyiv - hotspot for drone atack",
+    region: "kyiv",
+    coordinates: { lat: 50.4500, lng: 30.5233 },
+    type: "drone atack",
+  },
+  {
+    id: "danger-karkiv",
+    title: "karkiv - Active Frontline Area",
+    region: "karkiv oblast",
+    coordinates: { lat: 49.9935, lng: 36.2304 },
+    type: "frontline",
+  },
+  {
+    id: "danger-sumy",
+    title: "sumy - active frontline area",
+    region: "sumy oblast",
+    coordinates: { lat: 50.9077, lng: 34.7981 },
+    type: "frontline",
+  },
+  {
+    id: "alet-dnipro",
+    title: "dnipro -  active frontline",
+    region: "dnipro oblast",
+    coordinates: { lat: 48.4500, lng: 34.9833 },
+    type: "frontline"
+  },
+  {
+    id: "poltava-dnipro",
+    title: "poltava -  active frontline",
+    region: "poltava oblast",
+    coordinates: { lat: 49.5883, lng: 34.5514 },
+    type: "frontline"
+  },
+];
 
 const SAFE_LOCATIONS_KYIV = [
   {
@@ -268,6 +334,38 @@ function normalizeSafeLocations() {
   }));
 }
 
+function normalizeAlertZones() {
+  return STATIC_ALERT_ZONES.map((loc) => ({
+    id: loc.id,
+    title: loc.title,
+    region: loc.region,
+    coordinates: loc.coordinates,
+    time: new Date().toISOString(),
+    source: "manual",
+    confidenceScore: 4,
+    validationStatus: "verified",
+    status: "medium",
+    advice: "let op",
+    type: loc.type,
+  }));
+}
+
+function normalizeDangerZones() {
+  return STATIC_DANGER_ZONES.map((loc) => ({
+    id: loc.id,
+    title: loc.title,
+    region: loc.region,
+    coordinates: loc.coordinates,
+    time: new Date().toISOString(),
+    source: "manual",
+    confidenceScore: 4,
+    validationStatus: "verified",
+    status: "high",
+    advice: "gevaar",
+    type: loc.type,
+  }));
+}
+
 function statusFromOblastState(raw) {
   const changedAt = Date.parse(raw?.changed || "");
   const isRecent =
@@ -435,6 +533,8 @@ async function refreshIncidents() {
     );
 
     const safeLocations = normalizeSafeLocations();
+    const dangerZones = normalizeDangerZones();
+    const alertZones = normalizeAlertZones();
     const persistedUserZones = await loadUserZonesFromMongo();
     const cachedUserZones = Array.from(incidentCache.values()).filter(
       (item) => item.userCreated,
@@ -453,6 +553,8 @@ async function refreshIncidents() {
       ...primaryIncidents,
       ...fallbackIncidents.slice(0, 5),
       ...safeLocations,
+      ...dangerZones,
+      ...alertZones,
       ...userZones,
     ];
 
@@ -614,6 +716,36 @@ app.get("/api/zones/unverified", requireAdmin, async (req, res) => {
       error: error?.message,
     });
   }
+});
+
+app.patch("/api/zones/:id", requireAdmin, async (req, res) => {
+  const zoneId = req.params.id;
+  const existing = incidentCache.get(zoneId);
+
+  if (!existing || !existing.userCreated) {
+    return res.status(404).json({ ok: false, message: "Zone not found" });
+  }
+
+  const { title, status, reason } = req.body;
+  const updated = { ...existing };
+
+  if (title) updated.title = title;
+  if (status && ["high", "medium", "low"].includes(status)) {
+    updated.status = status;
+    updated.advice = adviceFromStatus(status);
+  }
+  if (reason) updated.reason = reason;
+
+  incidentCache.set(zoneId, updated);
+
+  if (isMongoConnected()) {
+    await incidentsCollection.updateOne(
+      { id: zoneId, userCreated: true },
+      { $set: { title: updated.title, status: updated.status, advice: updated.advice, reason: updated.reason } },
+    );
+  }
+
+  return res.json({ ok: true, zone: updated });
 });
 
 app.patch("/api/zones/:id/verify", requireAdmin, async (req, res) => {
